@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+.venv/
+venv/
+env/
+
+# Testing / Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Models & weights
+*.safetensors
+*.bin
+*.pt
+*.pth
+models/
+hf_cache/
+
+# Bench outputs
+bench/results/*.csv
+bench/results/*.json
+*.log
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Env
+.env
+.env.local

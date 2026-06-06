@@ -1,0 +1,45 @@
+# PROGRESS
+
+> 实时记录每个里程碑的状态、代码 tag、配套文章链接。完整计划见 [PLAN.md](PLAN.md)。
+
+## 状态图例
+
+- ⬜ 未开始
+- 🟡 进行中
+- ✅ 完成
+- 🔁 升级中（已有版本，正在写更优实现）
+
+## 核心里程碑（M1–M5）
+
+| M | 状态 | Tag | 完成日期 | 文章 | 备注 |
+| --- | --- | --- | --- | --- | --- |
+| M1 单序列前向 | ⬜ | — | — | — | 7 Protocol 骨架 + Qwen3 单文件 + L0/L1/L2 测试 |
+| M2 KV Cache | ⬜ | — | — | — | `ContiguousKVCache` |
+| M3 Continuous Batching | ⬜ | — | — | — | `FCFSScheduler` + 三队列 |
+| M4 PagedAttention (PyTorch) | ⬜ | — | — | — | `PagedKVCache`，伪版 |
+| M5 完整 demo + Benchmark + CI | ⬜ | — | — | — | OpenAI API + prefix cache + 三栏对照 + GitHub Actions |
+
+## 扩充里程碑（M6+）
+
+| M | 状态 | Tag | 文章 | 备注 |
+| --- | --- | --- | --- | --- |
+| M6 MoE 教学版 (for-loop) | ⬜ | — | — | Registry 引入 |
+| M7 Spec Decoding (n-gram) | ⬜ | — | — | `Drafter` Plugin |
+| M8 Triton PagedAttention kernel | ⬜ | — | — | 需 NVIDIA GPU |
+| M9 MoE grouped GEMM | ⬜ | — | — | |
+| M10 EAGLE-1 spec | ⬜ | — | — | |
+| M11 Long context (YaRN) | ⬜ | — | — | |
+| M12 Chunked Prefill | ⬜ | — | — | |
+| M13 VLM 教学版 | ⬜ | — | — | `inputs_embeds` 走通 |
+| M14 VLM 工程化 | ⬜ | — | — | image hash prefix cache |
+
+## M15+ 候选池
+
+详见 [PLAN.md §4 M15+](PLAN.md)，按兴趣挑选开新 M。
+
+## 日志
+
+### 2026-06-06
+- 仓库 `luhao2013/inferlite` 创建（MIT，公开）
+- 完整 PLAN 落地（含 4 层抽象 / 7 Protocol / L0–L3 四层验证 / Benchmark 三件套 / 14 个里程碑）
+- 准备开 M1
