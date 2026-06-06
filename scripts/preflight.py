@@ -1,15 +1,26 @@
 """Pre-flight check for inferlite.
 
 Run before starting M1 to verify:
-  1. uv-managed venv has torch + transformers
-  2. Qwen3-0.6B can be downloaded and run on the available device (MPS / CUDA / CPU)
-  3. Greedy decoding produces a non-empty, coherent output
+  1. uv-managed venv has torch + transformers + modelscope
+  2. Qwen3-0.6B can be downloaded (default via ModelScope, CN-friendly)
+  3. Model loads on the available device (MPS / CUDA / CPU)
+  4. Greedy decoding produces a non-empty output
+
+Why ModelScope by default
+-------------------------
+- huggingface.co is unreachable in CN networks (Connection reset).
+- HF mirror env vars (HF_ENDPOINT=https://hf-mirror.com) are validated against the
+  official domain in `huggingface_hub>=1.x` and silently fail (FileMetadataError).
+- ModelScope is an independent SDK (no httpx-based domain check), Qwen models are
+  officially mirrored there with identical sha256.
 
 Usage:
   make preflight
   # or
   uv run python scripts/preflight.py
   uv run python scripts/preflight.py --prompt "Hello" --max-new-tokens 20
+  uv run python scripts/preflight.py --source hf            # pull via HuggingFace
+  uv run python scripts/preflight.py --source local --model /path/to/dir
 """
 
 from __future__ import annotations
@@ -29,22 +40,46 @@ def pick_device() -> str:
     return "cpu"
 
 
+def ensure_local_model(model_id: str, source: str) -> str:
+    """Resolve a model_id to a local directory, downloading if needed.
+
+    source:
+        "modelscope" - download from ModelScope (default, CN-friendly)
+        "hf"         - download from HuggingFace Hub (needs network access)
+        "local"      - treat model_id as a pre-existing local path
+    """
+    if source == "local":
+        import os
+        if not os.path.isdir(model_id):
+            raise SystemExit(f"--source local but path is not a directory: {model_id}")
+        return model_id
+
+    if source == "modelscope":
+        from modelscope import snapshot_download
+        # Default cache: ~/.cache/modelscope/hub/<owner>/<name>
+        path = snapshot_download(model_id)
+        return path
+
+    if source == "hf":
+        from huggingface_hub import snapshot_download as hf_snapshot
+        return hf_snapshot(repo_id=model_id)
+
+    raise SystemExit(f"unknown --source: {source}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", default="Qwen/Qwen3-0.6B")
+    parser.add_argument("--model", default="Qwen/Qwen3-0.6B",
+                        help="model id on the chosen source, or local path when --source=local")
     parser.add_argument("--prompt", default="你好")
     parser.add_argument("--max-new-tokens", type=int, default=20)
     parser.add_argument(
-        "--hf-endpoint",
-        default="https://hf-mirror.com",
-        help="HF endpoint; default uses hf-mirror.com (CN-friendly). "
-             "Pass --hf-endpoint=https://huggingface.co to use the official one.",
+        "--source",
+        choices=["modelscope", "hf", "local"],
+        default="modelscope",
+        help="where to fetch weights from (default: modelscope, CN-friendly)",
     )
     args = parser.parse_args()
-
-    import os
-    os.environ.setdefault("HF_ENDPOINT", args.hf_endpoint)
-    print(f"[0/4] HF_ENDPOINT = {os.environ['HF_ENDPOINT']}")
 
     print("[1/4] importing torch + transformers ...")
     try:
@@ -63,18 +98,33 @@ def main() -> int:
     if device == "cpu":
         print("  WARN: no GPU/MPS detected; will run on CPU (slow but OK)")
 
-    print(f"[3/4] downloading + loading {args.model} ...")
+    print(f"[3/4] resolving {args.model} via source={args.source} ...")
+    t0 = time.time()
+    try:
+        local_path = ensure_local_model(args.model, args.source)
+    except Exception as e:
+        print(f"  FAIL: {type(e).__name__}: {e}")
+        if args.source == "modelscope":
+            print("  hint: check network; or fall back to --source hf / --source local")
+        return 1
+    print(f"      local_path   = {local_path}")
+    print(f"      resolved in    {time.time() - t0:.1f}s")
+
     t0 = time.time()
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained(args.model)
+    # local_files_only=True forbids any further network call: once snapshot_download
+    # succeeded, transformers must read the on-disk copy and never touch HF.
+    tokenizer = AutoTokenizer.from_pretrained(local_path, local_files_only=True)
     model = AutoModelForCausalLM.from_pretrained(
-        args.model,
+        local_path,
         dtype=torch.float32,
         device_map=device,
+        local_files_only=True,
     )
     model.eval()
-    print(f"      loaded in {time.time() - t0:.1f}s; params = {sum(p.numel() for p in model.parameters()) / 1e6:.1f}M")
+    n_params_m = sum(p.numel() for p in model.parameters()) / 1e6
+    print(f"      loaded in    {time.time() - t0:.1f}s; params = {n_params_m:.1f}M")
 
     print(f"[4/4] greedy decode prompt={args.prompt!r} max_new_tokens={args.max_new_tokens} ...")
     inputs = tokenizer(args.prompt, return_tensors="pt").to(device)
