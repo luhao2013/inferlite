@@ -31,21 +31,13 @@
 
 ## 环境
 
-一键安装（自动装 uv + Python 3.11 + 所有依赖 + 健康检查）：
+一键安装：
 
 ```bash
 make setup
 ```
 
-之后日常使用：
-
-```bash
-make test         # 跑测试
-make lint         # ruff 检查
-uv run python -m inferlite.cli "你好"
-```
-
-> 也可手动：`brew install uv && uv sync`（无 brew 时用 `curl -LsSf https://astral.sh/uv/install.sh | sh`）。
+详细说明（含 uv / make 是什么、常用命令、踩坑预警）见 [docs/SETUP.md](docs/SETUP.md)。
 
 ## 技术栈
 
