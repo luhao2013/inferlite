@@ -18,37 +18,36 @@
   - CI / 配置（.github/, pyproject.toml, .pre-commit-config.yaml）
 - **绝对不要**：AI 直接生成 `inferlite/model/`、`inferlite/engine/` 等核心实现
 
-## 任务推进协议
-1. 开新 M 前：`/research-before-plan Mn` → 产出 brief + 补 knowledge 卡
-2. 规划: `/plan-next-milestone Mn` → docs/Mn.md + docs/tasks/
-3. 开任务卡: `/next-task`（自动先 `/check-prerequisites`）→ 展开 `docs/tasks/Mn-TX-*.md`
-4. 用户写代码 + 跑测试 → 贴结果
-5. AI review（`/review-card TX`）→ 提改进 → commit
-6. `/archive-task TX` 三轨沉淀：lessons + knowledge 补漏 + mainline 草稿
-7. M 内全部 ✅ → `/archive-mainline Mn` 整理主线 → `/archive-milestone Mn` 写 summary + tag
+## 任务推进协议（R1 简化版 · 5 命令）
+1. **新 M 起点**：`/plan M<n>` → 自动调研 + 产出 `docs/M<n>.md` + 任务卡骨架
+2. **开任务卡**：`/work T<x>` → 自动检前置 knowledge + 输出作战简报
+3. **用户写代码** + 跑测试 → 贴结果
+4. **AI review**：`/review T<x>` → 提改进 → commit
+5. **任务卡归档**：`/archive task T<x>` → 沉淀 lessons + knowledge + 更新状态
+6. **里程碑归档**：`/archive milestone M<n>` → 写 Summary + tag
+7. **环境体检**：随时 `/preflight`
 
-## 知识库（双轨制 + 四类产物）
-- 文件: `~/learning/docs/projects/inferlite/`
-  - `mainline/` 主线（项目脉络+代码流，M 完成时归档）
-  - `knowledge/` 知识点（papers/libs/concepts/tools，规划时调研产出）
-  - `lessons/` 教训（任务卡完成时）
-  - `decisions/` ADR
-  - `research/` 调研简报（规划中间品）
-  - `milestones/` M 总结
-- Memory: CodeFlicker repos dimension，关键字 `inferlite`
-- 新会话进入项目时先 `search_memory("inferlite")`，再读 `docs/projects/inferlite/README.md` 索引
-- 详见 ADR-001（`~/learning/docs/projects/inferlite/decisions/001-spec-driven-workflow.md`）
+## 知识库（双轨制 · R1 平面化版）
+- **文件**（全在 `inferlite/docs/` 内，单 commit 范围）：
+  - `M<n>.md` 作战地图（含 Summary，里程碑完成后追加）
+  - `tasks/M<n>-T*.md` 任务卡（一卡一文件，含完成总结段）
+  - `knowledge.md` 知识点（单文件多 H2：Papers / Libraries / Concepts / Tools）
+  - `lessons.md` 教训（单文件 L1, L2, ... 顺序追加）
+  - `decisions.md` ADR（重大决策）
+  - `PROGRESS.md` 状态跟踪
+  - `PLAN.md` 路线图
+  - `REFERENCES.md` 参考资料分层
+  - `setup.md` 环境 + 仓库结构
+- **Memory**：CodeFlicker repos dimension，关键字 `inferlite`
+- 新会话进入项目时先 `search_memory("inferlite")`，再读 `docs/PROGRESS.md` + `docs/M<current>.md`
+- 详见 `docs/decisions.md` ADR-001 / ADR-002
 
-## Slash 命令
-- `/research-before-plan <scope>` — 规划前调研
-- `/plan-next-milestone Mn` — 基于知识库规划新 M
-- `/check-prerequisites Tx` — 任务卡开工前知识检查
-- `/next-task` — 开下一张任务卡
-- `/review-card TX` — review 已完成的 TX
-- `/preflight-check` — 开工前环境健康检查
-- `/archive-task TX` — 任务卡完成后三轨沉淀
-- `/archive-mainline Mn` — 里程碑完成后整理主线
-- `/archive-milestone Mn` — 里程碑完成后写 summary
+## Slash 命令（5 个）
+- `/plan <scope>` — 规划（M / T / 调整），含前置调研，自动补 knowledge.md
+- `/work <task-id>` — 开任务卡，含前置 knowledge gap 检查，输出作战简报
+- `/review <task-id>` — review 已完成的任务卡
+- `/archive task <id>` / `/archive milestone M<n>` — 归档（含 lessons + knowledge + summary）
+- `/preflight` — 环境健康检查
 
 ## 测试纪律
 - 每个手写模块必须有 L0 单测 vs `transformers.models.qwen3.modeling_qwen3.*` allclose
@@ -63,15 +62,16 @@
 
 ## 网络环境（国内）
 - HuggingFace 不可达 → 默认走 ModelScope
-- `make preflight` 已配置好（commit 5b7fc5e 起）
-- 详见 `docs/SETUP.md` §5.4 + `docs/M1.md` §8 坑 #9
+- `make preflight` 已配置好
+- 详见 `docs/setup.md` §4.2 + `docs/lessons.md` L2
 
 ## 反模式（NEVER）
 - ❌ AI 直接写 `inferlite/model/*.py` 业务代码（侵犯学习目标）
 - ❌ 跳过 L0 测试就 commit（违反"每模块对齐"纪律）
 - ❌ 一次塞超过 1 张任务卡的代码（违反小步 commit）
-- ❌ 在任务卡执行中插入环境调试（违反"地基/算法两频道"）
+- ❌ 在任务卡执行中插入环境调试（违反"地基/算法两频道"，见 lessons.md L3）
 - ❌ 用 conda base 的 python/pytest（用 `uv run`）
+- ❌ 把 knowledge 卡拆成新文件（违反 ADR-002 平面化）
 
 ## commit message 规范
 - 业务: `feat(model): RMSNorm aligned with Qwen3RMSNorm (T1 done)`
