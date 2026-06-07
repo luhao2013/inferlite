@@ -206,3 +206,83 @@ Qwen3 是 LLaMA 家族：RoPE、`RMSNorm`、`bias=False`、QK-norm。
 
 - `~/learning/docs/opensource/minivllm/`（MinivLLM 源码精读）
 - `~/learning/docs/papers/`（按主题分类的论文精读）
+
+---
+
+## 🧭 AI 协作方法论 / Vibe Coding 工作流
+
+> 与第一/二/三梯队不同：这里参考的不是 LLM 推理代码，而是"AI 协作开发本身"的方法论与工具。
+> 对 inferlite 这种"作者手撕 + AI 辅助 plan/review/doc"的项目尤其相关。
+
+### A1. github/spec-kit（业界事实标准）
+
+- **GitHub**: https://github.com/github/spec-kit
+- **核心**: Spec-Driven Development 工具包，标准化 `/specify → /plan → /tasks → /implement` 四阶段
+- **对 inferlite 借鉴**:
+  - 任务卡 7 字段模板（前置/产出/算法/测试/DoD/坑/估时）
+  - `plan.md` ↔ `tasks.md` 双向链接
+  - `constitution.md`（项目原则，等价于本仓库的 `AGENTS.md`）
+- **不直接迁移的理由**: docs/ 结构已九成像 spec-kit，重组 ROI 低
+
+### A2. Anthropic — Claude Code 官方最佳实践
+
+- **链接**: https://www.anthropic.com/news/claude-code-best-practices
+- **核心档**: `CLAUDE.md`（项目常驻记忆）+ `.claude/commands/`（自定义 slash 命令）+ Plan Mode
+- **对 inferlite 借鉴**: 已落地（见 `.claude/commands/` 目录）
+
+### A3. OpenSpec（change-set 风格）
+
+- **GitHub**: https://github.com/Fission-AI/OpenSpec
+- **核心**: 每次变更一个 spec → 实现 → archive 四态机
+- **对 inferlite 借鉴**: M1.md 任务卡天然就是 change-set；可学其状态标注
+
+### A4. Addy Osmani — "My LLM Coding Workflow Going Into 2026"
+
+- **链接**: https://medium.com/@addyosmani/my-llm-coding-workflow-going-into-2026-52fe1681325e
+- **核心论点**:
+  - "Vibe coding" ≠ "AI-assisted engineering"
+  - 小步 commit + 好 message 本身就是开发过程文档
+  - 对 AI 提"约束"比提"功能"更重要
+
+### A5. Addy Osmani — "Vibe coding vs AI-Assisted Engineering"
+
+- **链接**: https://medium.com/@addyosmani/vibe-coding-is-not-the-same-as-ai-assisted-engineering-3f81088d5b98
+- **划线**: "无脑跟着 AI 写" vs "把 AI 嵌入完整 SDLC"
+
+### A6. Cursor/Cline/Windsurf Rules 仓库
+
+- **代表**: https://github.com/PatrickJS/awesome-cursorrules
+- **对 inferlite 借鉴**: `AGENTS.md` / `CLAUDE.md` 措辞素材
+
+### A7. Aider（极简 diff 驱动）
+
+- **GitHub**: https://github.com/Aider-AI/aider
+- **核心**: edit → diff → confirm 三步循环，git diff 作为唯一交互界面
+
+### A8. 配套阅读
+
+| 资料 | 用途 |
+| --- | --- |
+| [Simon Willison — Coding with LLMs in Late 2025](https://simonwillison.net/2025/Oct/27/coding-with-llms/) | 综述含 prompt 模式 |
+| [Sourcegraph — Spec-First with AI](https://sourcegraph.com) | spec 文件结构推荐 |
+| [Karpathy — LLM as kernel of OS](https://karpathy.ai/) | "AI 是新 runtime"视角 |
+
+---
+
+## 🎯 inferlite 已落地的 AI 协作纪律
+
+| 借鉴源 | 本仓库实现 |
+| --- | --- |
+| spec-kit tasks 模板 | `docs/M1.md` §4 任务卡总表 + `docs/tasks/T*.md` 每卡独立 |
+| CLAUDE.md 常驻记忆 | `~/learning/AGENTS.md`（仓库根） |
+| Claude Code custom commands | `.claude/commands/`（next-task / review-card / preflight-check） |
+| OpenSpec 状态机 | 任务卡 status 列（⬜ pending / 🟡 in-progress / ✅ done） |
+| Addy Osmani 小步 commit | 当前 commit 历史已遵循（bddf42e → 6163a14 一连串小提交） |
+| Plan Mode（先方案再执行） | 每张任务卡先发卡 → 用户实现 → review → commit |
+
+### 元洞察（来自 T1 RMSNorm 复盘）
+
+> **"地基"和"算法"是两个频道，不要混着切。**
+>
+> 这就是 spec-driven 的本质：把"做什么"与"怎么做"分离到两个时间窗口。
+> AI 协作时尤其重要——AI 上下文有限，频道切换成本高。
