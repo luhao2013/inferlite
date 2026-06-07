@@ -1,5 +1,5 @@
 site_name: inferlite
-site_description: 从零手撕的 LLM 推理引擎学习项目
+site_description: 从零手撕的 LLM 推理引擎学习项目 · L0-aligned with transformers
 site_url: https://luhao2013.github.io/inferlite/
 repo_url: https://github.com/luhao2013/inferlite
 repo_name: luhao2013/inferlite
@@ -11,58 +11,89 @@ site_dir: site
 theme:
   name: material
   language: zh
+  custom_dir: docs/overrides
   features:
     - navigation.tabs
+    - navigation.tabs.sticky
     - navigation.sections
-    - navigation.expand
     - navigation.path
     - navigation.indexes
     - navigation.top
     - navigation.footer
+    - navigation.tracking
     - search.suggest
     - search.highlight
+    - search.share
     - content.code.copy
     - content.code.annotate
+    - content.code.select
+    - content.tabs.link
+    - content.tooltips
     - toc.follow
+    - announce.dismiss
   palette:
-    - media: "(prefers-color-scheme: light)"
-      scheme: default
-      primary: indigo
-      accent: indigo
-      toggle:
-        icon: material/brightness-7
-        name: 切换暗色
+    # 默认深色（极客风首选）
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
-      primary: indigo
-      accent: indigo
+      primary: black
+      accent: cyan
       toggle:
-        icon: material/brightness-4
-        name: 切换亮色
+        icon: material/weather-sunny
+        name: Switch to light
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: black
+      accent: teal
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark
   icon:
     repo: fontawesome/brands/github
+    logo: octicons/cpu-16
+    edit: material/pencil
+    view: material/eye
+    annotation: material/plus-circle
+    admonition:
+      note: octicons/info-16
+      abstract: octicons/checklist-16
+      info: octicons/info-16
+      tip: octicons/light-bulb-16
+      success: octicons/check-circle-16
+      question: octicons/question-16
+      warning: octicons/alert-16
+      failure: octicons/x-circle-16
+      danger: octicons/zap-16
+      bug: octicons/bug-16
+      example: octicons/beaker-16
+      quote: octicons/quote-16
   font:
-    text: Roboto
+    text: Inter
     code: JetBrains Mono
+
+extra_css:
+  - stylesheets/extra.css
+
+extra_javascript:
+  - javascripts/extra.js
 
 nav:
   - 首页: README.md
   - 1. 规划:
-      - 路线图 (PLAN): 1-plan/PLAN.md
-      - 进度 (PROGRESS): 1-plan/PROGRESS.md
+      - 路线图 PLAN: 1-plan/PLAN.md
+      - 进度 PROGRESS: 1-plan/PROGRESS.md
       - M1 作战地图: 1-plan/M1.md
   - 2. 任务卡:
       - 索引: 2-tasks/README.md
       - 模板: 2-tasks/_TEMPLATE.md
-      - T0' ModelConfig: 2-tasks/M1-T0p-ModelConfig.md
+      - "T0' ModelConfig": 2-tasks/M1-T0p-ModelConfig.md
       - T1 RMSNorm: 2-tasks/M1-T1-RMSNorm.md
       - T2 SwiGLU: 2-tasks/M1-T2-SwiGLU.md
   - 3. 知识库:
-      - Knowledge (论文/库/概念/工具): 3-kb/knowledge.md
-      - Lessons (踩坑教训): 3-kb/lessons.md
-      - Decisions (架构决策 ADR): 3-kb/decisions.md
-      - References (参考资料): 3-kb/REFERENCES.md
-  - 4. 环境与结构: 4-setup.md
+      - knowledge: 3-kb/knowledge.md
+      - lessons: 3-kb/lessons.md
+      - decisions ADR: 3-kb/decisions.md
+      - references: 3-kb/REFERENCES.md
+  - 4. 环境: 4-setup.md
 
 markdown_extensions:
   - admonition
@@ -72,20 +103,22 @@ markdown_extensions:
   - tables
   - md_in_html
   - toc:
-      permalink: true
+      permalink: "#"
+      permalink_title: 锚点
       toc_depth: 3
   - pymdownx.details
   - pymdownx.highlight:
       anchor_linenums: true
       line_spans: __span
       pygments_lang_class: true
+      use_pygments: true
   - pymdownx.inlinehilite
   - pymdownx.snippets
   - pymdownx.superfences:
       custom_fences:
         - name: mermaid
           class: mermaid
-          format: !!python/name:mermaid2.fence_mermaid_custom
+          format: !!python/name:mermaid2.fence_mermaid
   - pymdownx.tabbed:
       alternate_style: true
   - pymdownx.tasklist:
@@ -95,8 +128,14 @@ markdown_extensions:
   - pymdownx.keys
   - pymdownx.mark
   - pymdownx.smartsymbols
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
   - pymdownx.arithmatex:
       generic: true
+  - pymdownx.critic
+  - pymdownx.betterem
+  - pymdownx.magiclink
 
 plugins:
   - search:
@@ -110,6 +149,11 @@ extra:
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/luhao2013/inferlite
+  status:
+    new: 新增
+    deprecated: 已废弃
   generator: false
 
-copyright: Copyright &copy; 2026 luhao &mdash; MIT License
+copyright: >
+  Copyright &copy; 2026 luhao &mdash; MIT &mdash;
+  Built with <a href="https://squidfunk.github.io/mkdocs-material/">Material for MkDocs</a>
