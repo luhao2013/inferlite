@@ -2,7 +2,10 @@
 
 > 从零手写一个**可读、可跑、可解释**的 LLM 推理引擎，覆盖 vLLM 的核心思想（KV cache / PagedAttention / Continuous Batching / Prefix Cache），按里程碑驱动持续扩充（MoE / Spec Decoding / Triton kernel / 量化 / VLM …）。
 
+[![tests](https://github.com/luhao2013/inferlite/actions/workflows/tests.yml/badge.svg)](https://github.com/luhao2013/inferlite/actions/workflows/tests.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
+[![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)](https://github.com/astral-sh/uv)
 
 ## 项目定位
 
