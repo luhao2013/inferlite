@@ -79,10 +79,10 @@ echo
 echo "[4/6] knowledge.md 索引摘要 vs 实际章节"
 KB_FILE="docs/3-kb/knowledge.md"
 declared_gaps=$(grep -cE '^- ⚠️ \`Concepts#' "$KB_FILE" || echo 0)
-if [ "$declared_gaps" -ge 3 ]; then
-  ok "已知缺口段声明了 $declared_gaps 个待补 Concepts 卡（≥ 3 符合预期）"
+if [ "$declared_gaps" -ge 2 ]; then
+  ok "已知缺口段声明了 $declared_gaps 个待补 Concepts 卡（≥ 2 符合预期；数值对齐策略已于 T0 回填）"
 else
-  fail "已知缺口段只声明 $declared_gaps 个，预期 ≥ 3（数值对齐 / KV Cache / Continuous Batching）"
+  fail "已知缺口段只声明 $declared_gaps 个，预期 ≥ 2（KV Cache / Continuous Batching；数值对齐策略已回填）"
 fi
 
 # ── 5. 旧编号残留检查（R2 重命名规约）───────────

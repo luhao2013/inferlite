@@ -9,7 +9,7 @@
 | ID | 文件 | 状态 |
 | --- | --- | --- |
 | T0 | （历史，已并入 M0） | ✅ |
-| T0 | [M1-T0-ModelConfig.md](./M1-T0-ModelConfig.md) | ⬜ |
+| T0 | [M1-T0-ModelConfig.md](./M1-T0-ModelConfig.md) | ✅ |
 | T1 | [M1-T1-RMSNorm.md](./M1-T1-RMSNorm.md) | ✅ |
 | T2 | [M1-T2-SwiGLU.md](./M1-T2-SwiGLU.md) | ⬜ |
 | T3 | — 开工时再创建 | ⬜ |

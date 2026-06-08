@@ -10,13 +10,13 @@
 
 > 自动维护：每次新增/删除卡片时同步更新本段。最后更新：2026-06-09。
 
-**总览**：4 类共 **21 张** knowledge 卡片 + 3 条 lessons + 3 个 ADR。
+**总览**：4 类共 **22 张** knowledge 卡片 + 4 条 lessons + 3 个 ADR。
 
 | 章节 | 卡片数 | 列表（点击跳转） |
 | --- | --- | --- |
 | **Papers** | 5 | [RMSNorm](#rmsnorm-zhang-sennrich-neurips-2019) · [Qwen3 Tech Report](#qwen3-tech-report) · [SwiGLU](#swiglu-shazeer-2020) · [RoPE](#rope-su-et-al-2021) · [GQA](#gqa-ainslie-et-al-2023) |
 | **Libraries** | 5 | [transformers Qwen3 模块](#transformers-qwen3-ground-truth) · [transformers 5 核心对象](#transformers-hf) · [pytest](#pytest-api) · [modelscope](#modelscope-snapshot_download) · [huggingface_hub 1.x](#huggingface_hub-1x) |
-| **Concepts** | 6 | [upcast fp32](#upcast-to-fp32) · [tie_word_embeddings](#tie_word_embeddings) · [形状速查](#shape-cheatsheet) · [推理上下文](#inference-context) · [Python dataclass](#python-dataclass) · [Factory pattern](#factory-pattern) |
+| **Concepts** | 7 | [upcast fp32](#upcast-to-fp32) · [数值对齐策略](#numeric-alignment-strategy) · [tie_word_embeddings](#tie_word_embeddings) · [形状速查](#shape-cheatsheet) · [推理上下文](#inference-context) · [Python dataclass](#python-dataclass) · [Factory pattern](#factory-pattern) |
 | **Tools** | 5 | [uv](#uvpython) · [make](#make) · [ruff](#rufflint-format) · [pre-commit](#pre-commitcommit) · [pytest-mark / CI](#pytest-mark-ci-matrix) |
 
 **已沉淀的 lessons**（[详见 lessons.md](./lessons.md)）：
@@ -24,6 +24,7 @@
 - **L1** RMSNorm 必须 upcast fp32 算方差（→ Concepts#upcast）
 - **L2** 国内拉模型用 ModelScope 替代 HF mirror（→ Libraries#modelscope, #huggingface_hub）
 - **L3** 地基 vs 算法是两个频道，不要混着切（→ 协作节奏）
+- **L4** GQA 的 `head_dim` 是独立超参，不能从 KV 头数推导（→ Papers#Qwen3, Concepts#shape）
 
 **已落地的 ADR**（[详见 decisions.md](./decisions.md)）：
 
@@ -31,11 +32,10 @@
 - **ADR-002** 知识库与代码同仓（R1 重构）
 - **ADR-003** 分组目录 + MkDocs Material 可视化
 
-**任务卡进度**（[详见 PROGRESS](../1-plan/PROGRESS.md)）：M1-T1 RMSNorm ✅ · T0 ModelConfig 🟡 · T2-T6 ⬜
+**任务卡进度**（[详见 PROGRESS](../1-plan/PROGRESS.md)）：M1-T0 ModelConfig ✅ · M1-T1 RMSNorm ✅ · T2-T6 ⬜
 
 **已知缺口**（开工时回填）：
 
-- ⚠️ `Concepts#数值对齐策略` — fp32 baseline / bf16 实战 / 三层验证三件套（M1 横跨 T1-T6 的元概念，T0 完成时回填）
 - ⚠️ `Concepts#KV Cache 结构` — 等 M2 任务卡触发
 - ⚠️ `Concepts#Continuous Batching 调度` — 等 M3 任务卡触发
 
@@ -392,6 +392,68 @@ def numerically_sensitive_op(x):
 ```
 
 **本项目应用**：T1 RMSNorm / T4 Attention softmax / T9 Sampler log_softmax
+
+### 数值对齐策略 { #numeric-alignment-strategy }
+
+**一句话**：数值对齐不是“跑通就行”，而是用一个可信 reference（通常是 transformers）把输入、权重、dtype、模式固定住，然后逐层比较输出误差，定位第一个分叉点。
+
+#### 1. 三层验证
+
+| 层级 | 目标 | 例子 |
+| --- | --- | --- |
+| L0 单元测试 | 单个算子逻辑正确 | `RMSNorm` / `ModelConfig` |
+| L1 模块对齐 | 单个模型模块和 transformers 输出接近 | `Qwen3MLP` / `Qwen3Attention` |
+| L2 e2e | 单序列 forward / greedy 结果一致 | logits top-k / next token |
+
+M1·P1 的主线是 L0 → L1：先把 `ModelConfig` / `RMSNorm` / `SwiGLU` / `RoPE` / `GQA` / `DecoderLayer` 都钉住，再拼 `Qwen3Model`。
+
+#### 2. 标准对齐流程
+
+```python
+ref = TransformersModule(...).eval()
+mine = InferliteModule(...).eval()
+mine.load_state_dict(ref.state_dict(), strict=False)
+
+x = fixed_input(seed=0, dtype=torch.float32)
+with torch.no_grad():
+    y_ref = ref(x)
+    y_mine = mine(x)
+
+assert torch.allclose(y_mine, y_ref, atol=..., rtol=...)
+```
+
+关键控制变量：
+
+1. **同输入**：固定 seed；shape 覆盖小/中/边界。
+2. **同权重**：`load_state_dict()` 或手动复制权重。
+3. **同模式**：`.eval()`；`torch.no_grad()` / `torch.inference_mode()`。
+4. **同 dtype 策略**：fp32 先对齐；bf16/fp16 再单独测。
+5. **同容差**：fp32 用更严 `1e-5` 级；bf16/fp16 放宽。
+
+#### 3. T0 的角色
+
+`ModelConfig` 是数值对齐的地基：后续所有模块的 shape 都从同一个 config 读，避免在 `RMSNorm(1024)`、`GQAAttention(16, 8, 128)` 等地方散落 magic number。
+
+尤其是 Qwen3-0.6B：
+
+```text
+head_dim = 128
+hidden_size / num_attention_heads = 1024 / 16 = 64
+```
+
+如果把 `head_dim` 错推成 64，T4 Attention 的 projection shape 会整体错位，L1 对齐不可能通过。
+
+#### 4. 常见失败模式
+
+| 失败模式 | 症状 | 排查方向 |
+| --- | --- | --- |
+| 忘 `.eval()` | dropout / cache 行为不同 | 先关训练态 |
+| 忘同步权重 | 输出完全不同 | 检查 `state_dict` key |
+| dtype 策略不同 | fp32 近、bf16 偏 | 查 upcast / cast 回原 dtype |
+| shape 参数硬编码错 | matmul / reshape 爆炸或输出维度不对 | 回到 `ModelConfig` |
+| reference 版本漂移 | 本地/链接看到的源码不一致 | 用固定 commit 链接 |
+
+**本项目应用**：M1·P1 全部模块。
 
 ### tie_word_embeddings
 

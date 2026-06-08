@@ -15,7 +15,7 @@
 
 | M | 状态 | Tag | 完成日期 | 文章 | 备注 |
 | --- | --- | --- | --- | --- | --- |
-| **M1** Qwen3 单序列推理 | 🟡 | — | — | — | P1 数值对齐（T1 ✅, T0/T2-T8 ⬜）+ P2 出字（T9-T11 ⬜） |
+| **M1** Qwen3 单序列推理 | 🟡 | — | — | — | P1 数值对齐（T0/T1 ✅, T2-T8 ⬜）+ P2 出字（T9-T11 ⬜） |
 | **M2** KV Cache | ⬜ | — | — | — | `ContiguousKVCache` |
 | **M3** Continuous Batching | ⬜ | — | — | — | `FCFSScheduler` + 三队列 |
 | **M4** PagedAttention (PyTorch) | ⬜ | — | — | — | `PagedKVCache`，伪版 |
@@ -38,6 +38,15 @@
 ## M15+ 候选池
 
 详见 [PLAN.md §4 M15+](PLAN.md#milestones-extension)，按兴趣挑选开新 M。
+
+### 2026-06-09
+- **T0 ModelConfig 完成**
+  - `inferlite/config.py::ModelConfig`：11 个 Qwen3-0.6B 核心超参，`frozen=True` 只读合同
+  - `from_json()`：白名单过滤 HF config.json，`head_dim` 缺失兼容兜底，`rope_theta` cast float
+  - `qwen3_0_6b()`：硬编码 0.6B ground truth，单测不依赖磁盘缓存
+  - `tests/unit/test_config.py`：factory / JSON round-trip / head_dim fallback / frozen / GQA validation 共 5 测试
+  - 验证：`uv run pytest tests/unit/test_config.py -q` 5/5 绿；`make test` 17/17 绿；`make doctor` 9/9 绿
+  - 复盘：补 Qwen3-0.6B 架构精读、Python dataclass / Factory pattern 知识卡；新增 L4 head_dim 独立超参教训
 
 ## 日志
 
