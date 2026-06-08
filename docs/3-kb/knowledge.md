@@ -8,15 +8,15 @@
 
 ## 📊 索引摘要
 
-> 自动维护：每次新增/删除卡片时同步更新本段。最后更新：2026-06-07。
+> 自动维护：每次新增/删除卡片时同步更新本段。最后更新：2026-06-09。
 
-**总览**：4 类共 **20 张** knowledge 卡片 + 3 条 lessons + 3 个 ADR。
+**总览**：4 类共 **21 张** knowledge 卡片 + 3 条 lessons + 3 个 ADR。
 
 | 章节 | 卡片数 | 列表（点击跳转） |
 | --- | --- | --- |
 | **Papers** | 5 | [RMSNorm](#rmsnorm-zhang-sennrich-neurips-2019) · [Qwen3 Tech Report](#qwen3-tech-report) · [SwiGLU](#swiglu-shazeer-2020) · [RoPE](#rope-su-et-al-2021) · [GQA](#gqa-ainslie-et-al-2023) |
 | **Libraries** | 5 | [transformers Qwen3 模块](#transformers-qwen3-ground-truth) · [transformers 5 核心对象](#transformers-hf) · [pytest](#pytest-api) · [modelscope](#modelscope-snapshot_download) · [huggingface_hub 1.x](#huggingface_hub-1x) |
-| **Concepts** | 5 | [upcast fp32](#upcast-to-fp32) · [tie_word_embeddings](#tie_word_embeddings) · [形状速查](#shape-cheatsheet) · [推理上下文](#inference-context) · [Factory pattern](#factory-pattern) |
+| **Concepts** | 6 | [upcast fp32](#upcast-to-fp32) · [tie_word_embeddings](#tie_word_embeddings) · [形状速查](#shape-cheatsheet) · [推理上下文](#inference-context) · [Python dataclass](#python-dataclass) · [Factory pattern](#factory-pattern) |
 | **Tools** | 5 | [uv](#uvpython) · [make](#make) · [ruff](#rufflint-format) · [pre-commit](#pre-commitcommit) · [pytest-mark / CI](#pytest-mark-ci-matrix) |
 
 **已沉淀的 lessons**（[详见 lessons.md](./lessons.md)）：
@@ -435,9 +435,123 @@ with torch.inference_mode():
 ```
 推理路径必须包，否则 MPS 显存翻倍。
 
+### Python dataclass
+
+**一句话**：`dataclass` 是 Python 给“主要用来存数据的类”准备的语法糖；它根据字段声明自动生成 `__init__` / `__repr__` / `__eq__`，让 `ModelConfig` 这种超参容器少写样板代码。
+
+#### 1. 不用 dataclass 会怎样
+
+```python
+class ModelConfig:
+    def __init__(self, hidden_size: int, num_hidden_layers: int, rms_norm_eps: float):
+        self.hidden_size = hidden_size
+        self.num_hidden_layers = num_hidden_layers
+        self.rms_norm_eps = rms_norm_eps
+```
+
+字段一多（T0 有 11 个）就容易漏赋值、顺序写错、比较不方便。
+
+#### 2. 用 dataclass
+
+```python
+from dataclasses import dataclass
+
+@dataclass
+class ModelConfig:
+    hidden_size: int
+    num_hidden_layers: int
+    rms_norm_eps: float
+```
+
+Python 自动生成：
+
+- `__init__`：可以 `ModelConfig(hidden_size=1024, ...)`
+- `__repr__`：打印时显示字段和值，便于 debug
+- `__eq__`：按字段内容比较，而不是按对象地址比较
+
+所以测试里可以直接写：
+
+```python
+assert ModelConfig.from_json(path) == ModelConfig.qwen3_0_6b()
+```
+
+这句成立的前提就是 `dataclass` 自动生成了字段级 `__eq__`。
+
+#### 3. `frozen=True`
+
+```python
+@dataclass(frozen=True)
+class ModelConfig:
+    hidden_size: int
+```
+
+表示对象创建后不可修改：
+
+```python
+cfg = ModelConfig(hidden_size=1024)
+cfg.hidden_size = 2048   # dataclasses.FrozenInstanceError
+```
+
+**为什么 config 要 frozen**：模型一旦按 `cfg.hidden_size=1024` 初始化，权重 shape 已经固定；如果运行中偷偷改成 2048，config 与真实模型结构会分裂，后续会出现很难排查的 shape bug。
+
+#### 4. 适用边界
+
+`dataclass` 适合：字段驱动、主要存数据、行为少的对象。
+
+典型例子：
+
+- `ModelConfig`
+- `SamplingParams`
+- `RequestState`
+- `BlockMeta`
+
+不适合：大量行为 + 复杂生命周期的核心执行对象，例如 `EngineCore` / `Scheduler` / `Qwen3Model(nn.Module)`。
+
+**本项目应用**：T0 `inferlite.config.ModelConfig`。
+
 ### Factory pattern (经典工厂)
 
-（待补 —— T0 ModelConfig.from_json() 涉及时展开）
+**一句话**：Factory pattern 是“把对象创建逻辑封装成一个方法/函数”，调用方不用知道对象怎么组装，只拿到成品。
+
+T0 里有两个轻量工厂：
+
+```python
+cfg = ModelConfig.qwen3_0_6b()      # 从硬编码事实创建
+cfg = ModelConfig.from_json(path)   # 从 config.json 创建
+```
+
+#### 为什么不用调用方自己拼
+
+如果每个调用方都这么写：
+
+```python
+cfg = ModelConfig(
+    hidden_size=1024,
+    num_hidden_layers=28,
+    # ... 11 个字段 ...
+)
+```
+
+问题：
+
+1. magic number 到处散落
+2. 字段一变要全局改
+3. JSON 过滤 / dtype cast / head_dim fallback 逻辑会复制多份
+
+Factory 把这三件事收到一个地方：
+
+- `qwen3_0_6b()`：测试用，不依赖磁盘
+- `from_json()`：真实模型加载用，负责白名单过滤、`head_dim` 兜底、`rope_theta` cast float
+
+#### 本质
+
+Factory 不是高级设计模式，T0 里就是：**给“怎么创建一个合法 config”起一个名字**。
+
+**本项目应用**：
+
+- T0：`ModelConfig.qwen3_0_6b()` / `ModelConfig.from_json()`
+- T7：`load_from_hf(path)` 会先调用 `ModelConfig.from_json(path / "config.json")`
+
 
 ---
 
