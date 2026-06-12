@@ -8,9 +8,22 @@
 - **估时**: 3h
 
 ## 目标
-实现从本地 HuggingFace / ModelScope Qwen3-0.6B 权重目录加载 `config.json` 与 `model.safetensors`，并把 HF state_dict key 精确映射到 inferlite `Qwen3Model`。T7 完成后，`Qwen3Model` 应能加载真实 Qwen3-0.6B 权重，但还不负责 lm_head logits 对齐和文本生成。
+实现从本地 HuggingFace / ModelScope Qwen3-0.6B 权重目录加载 `config.json` 与 `model.safetensors`，完成完整的 backbone 加载链路：
+
+```text
+model_dir
+  -> config.json
+  -> ModelConfig.from_json
+  -> Qwen3Model(config)
+  -> model.safetensors
+  -> key 映射 + 权重加载
+  -> 返回可用的 Qwen3Model
+```
+
+T7 完成后，调用方应能用一个高级入口从本地模型目录得到已加载真实权重的 `Qwen3Model`。T7 仍不负责 lm_head logits 对齐和文本生成。
 
 ## 产出文件
+- `inferlite/model/weights.py::load_weights_into_model`
 - `inferlite/model/weights.py::load_from_hf`
 - `inferlite/model/weights.py::map_hf_key_to_inferlite_key` 或等价 WeightMap 逻辑
 - `tests/unit/test_weights.py`
@@ -112,17 +125,21 @@ model.embed_tokens.weight -> embed_tokens.weight
 
 ## API 草案
 
+T7 建议拆成两层 API：
+
+### 1. 底层：只负责给已有模型灌权重
+
 ```python
-def load_from_hf(
+def load_weights_into_model(
     model: Qwen3Model,
     model_dir: str | Path,
     *,
     strict: bool = True,
 ) -> None:
-    """从 HF/ModelScope 本地目录加载 Qwen3Model backbone 权重。"""
+    """从 HF/ModelScope 本地目录加载 Qwen3Model backbone 权重到已有 model。"""
 ```
 
-建议行为：
+职责边界：
 
 1. 读取 `model.safetensors`
 2. 遍历 HF key
@@ -131,20 +148,51 @@ def load_from_hf(
 5. 校验 shape
 6. `model.load_state_dict(mapped_state_dict, strict=strict)`
 
+### 2. 高层：完整 from_pretrained 风格入口
+
+```python
+def load_from_hf(
+    model_dir: str | Path,
+    *,
+    strict: bool = True,
+) -> Qwen3Model:
+    """读取 config.json，构造 Qwen3Model，并加载 model.safetensors 后返回。"""
+```
+
+建议实现：
+
+```python
+def load_from_hf(model_dir: str | Path, *, strict: bool = True) -> Qwen3Model:
+    model_dir = Path(model_dir)
+    config = ModelConfig.from_json(model_dir / "config.json")
+    model = Qwen3Model(config)
+    load_weights_into_model(model, model_dir, strict=strict)
+    return model
+```
+
+这样测试也更清楚：
+
+```text
+load_weights_into_model: 测 key 映射、shape 校验、权重是否灌入
+load_from_hf: 测 config.json -> Qwen3Model -> 权重加载 -> 返回模型
+```
+
 ## L0 测试清单
 
 | # | 测什么 | Ground truth | 容差 |
 | --- | --- | --- | --- |
 | 1 | key 映射 `model.` 前缀去除 | 手工 key 表 | exact |
 | 2 | `lm_head.weight` 在 backbone 阶段被跳过 | 手工 state_dict | exact |
-| 3 | 小尺寸 fake safetensors 可加载 | 自造 `Qwen3Model.state_dict()` | exact |
-| 4 | shape mismatch 能早失败 | 人造错误 shape | raise |
-| 5 | missing/unexpected key 报告清晰 | `load_state_dict` 结果 | exact |
-| 6 | 可选 smoke：真实 Qwen3-0.6B safetensors key 能被覆盖到 backbone | 本地真实模型文件 | no error |
+| 3 | 小尺寸 fake safetensors 可加载到已有 model | 自造 `Qwen3Model.state_dict()` | exact |
+| 4 | 高层 `load_from_hf(model_dir)` 会读取 config 并返回 `Qwen3Model` | fake `config.json` + safetensors | exact |
+| 5 | shape mismatch 能早失败 | 人造错误 shape | raise |
+| 6 | missing/unexpected key 报告清晰 | `load_state_dict` 结果 | exact |
+| 7 | 可选 smoke：真实 Qwen3-0.6B safetensors key 能被覆盖到 backbone | 本地真实模型文件 | no error |
 
 ## DoD
 - [ ] `tests/unit/test_weights.py` 全绿
-- [ ] fake safetensors 加载后模型参数与源 state_dict 完全一致
+- [ ] `load_weights_into_model(model, model_dir)` 可给已有模型灌入 fake safetensors 权重
+- [ ] `load_from_hf(model_dir)` 可从 fake 目录读取 `config.json`、构造 `Qwen3Model`、加载权重并返回模型
 - [ ] `lm_head.weight` 在 T7 被明确 skip，不静默误加载
 - [ ] shape mismatch 有清晰错误
 - [ ] `uv run pytest tests/unit/test_config.py tests/unit/test_rmsnorm.py tests/unit/test_mlp.py tests/unit/test_rope.py tests/unit/test_attention.py tests/unit/test_decoder_layer.py tests/unit/test_qwen3_model.py tests/unit/test_weights.py -q` 全绿
