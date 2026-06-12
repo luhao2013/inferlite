@@ -14,8 +14,8 @@
 | T2 | [M1-T2-SwiGLU.md](./M1-T2-SwiGLU.md) | ✅ |
 | T3 | [M1-T3-RoPE.md](./M1-T3-RoPE.md) | ✅ |
 | T4 | [M1-T4-GQA-Attention.md](./M1-T4-GQA-Attention.md) | ✅ |
-| T5 | [M1-T5-DecoderLayer.md](./M1-T5-DecoderLayer.md) | 🟡 |
-| T6 | — 开工时再创建 | ⬜ |
+| T5 | [M1-T5-DecoderLayer.md](./M1-T5-DecoderLayer.md) | ✅ |
+| T6 | [M1-T6-Qwen3Model.md](./M1-T6-Qwen3Model.md) | 🟡 |
 | T7 | — 开工时再创建 | ⬜ |
 | T8 | — 开工时再创建 | ⬜ |
 
