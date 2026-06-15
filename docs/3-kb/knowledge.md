@@ -10,13 +10,13 @@
 
 > 自动维护：每次新增/删除卡片时同步更新本段。最后更新：2026-06-09。
 
-**总览**：4 类共 **23 张** knowledge 卡片 + 4 条 lessons + 3 个 ADR。
+**总览**：4 类共 **24 张** knowledge 卡片 + 4 条 lessons + 3 个 ADR。
 
 | 章节 | 卡片数 | 列表（点击跳转） |
 | --- | --- | --- |
 | **Papers** | 5 | [RMSNorm](#rmsnorm-zhang-sennrich-neurips-2019) · [Qwen3 Tech Report](#qwen3-tech-report) · [SwiGLU](#swiglu-shazeer-2020) · [RoPE](#rope-su-et-al-2021) · [GQA](#gqa-ainslie-et-al-2023) |
 | **Libraries** | 6 | [transformers Qwen3 模块](#transformers-qwen3-ground-truth) · [vLLM Qwen3 weight loading](#vllm-qwen3-weight-loading) · [transformers 5 核心对象](#transformers-hf) · [pytest](#pytest-api) · [modelscope](#modelscope-snapshot_download) · [huggingface_hub 1.x](#huggingface_hub-1x) |
-| **Concepts** | 7 | [upcast fp32](#upcast-to-fp32) · [数值对齐策略](#numeric-alignment-strategy) · [tie_word_embeddings](#tie_word_embeddings) · [形状速查](#shape-cheatsheet) · [推理上下文](#inference-context) · [Python dataclass](#python-dataclass) · [Factory pattern](#factory-pattern) |
+| **Concepts** | 8 | [upcast fp32](#upcast-to-fp32) · [数值对齐策略](#numeric-alignment-strategy) · [PyTorch state_dict 命名规则](#pytorch-state_dict-命名规则) · [tie_word_embeddings](#tie_word_embeddings) · [形状速查](#shape-cheatsheet) · [推理上下文](#inference-context) · [Python dataclass](#python-dataclass) · [Factory pattern](#factory-pattern) |
 | **Tools** | 5 | [uv](#uvpython) · [make](#make) · [ruff](#rufflint-format) · [pre-commit](#pre-commitcommit) · [pytest-mark / CI](#pytest-mark-ci-matrix) |
 
 **已沉淀的 lessons**（[详见 lessons.md](./lessons.md)）：
@@ -363,7 +363,7 @@ return torch.cat((-x2, x1), dim=-1)
 | `Qwen3Attention` | 同上 | `GQAAttention` |
 | `Qwen3DecoderLayer` | 同上 | `Qwen3DecoderLayer` |
 | `Qwen3Model` | 同上 | `Qwen3Model` |
-| `Qwen3ForCausalLM` | 同上 | 不实现（直接 tie embed） |
+| `Qwen3ForCausalLM` | 同上 | `Qwen3ForCausalLM` |
 
 **标准对齐测试模式**：
 
@@ -705,6 +705,210 @@ hidden_size / num_attention_heads = 1024 / 16 = 64
 | reference 版本漂移 | 本地/链接看到的源码不一致 | 用固定 commit 链接 |
 
 **本项目应用**：M1·P1 全部模块。
+
+### PyTorch state_dict 命名规则
+
+**一句话**：PyTorch 的 `state_dict` key 不是 tensor 自己天生有名字，而是由 `nn.Module` 上的属性路径递归生成。
+
+#### 1. 属性名决定 key 前缀
+
+```python
+class M(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.linear = nn.Linear(3, 2)
+```
+
+`M().state_dict().keys()` 会包含：
+
+```text
+linear.weight
+linear.bias
+```
+
+其中：
+
+```text
+linear  来自 self.linear
+weight   来自 nn.Linear 内部 Parameter 名
+bias     来自 nn.Linear 内部 Parameter 名
+```
+
+如果把字段名改成：
+
+```python
+self.query_projection = nn.Linear(...)
+```
+
+key 就会变成：
+
+```text
+query_projection.weight
+```
+
+所以模型字段命名会直接影响权重加载。
+
+#### 2. 嵌套模块会拼路径
+
+```python
+class A(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.block = B()
+
+class B(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.linear = nn.Linear(3, 2)
+```
+
+最终 key：
+
+```text
+block.linear.weight
+block.linear.bias
+```
+
+路径来自：
+
+```text
+self.block -> self.linear -> weight/bias
+```
+
+#### 3. ModuleList 使用数字下标
+
+```python
+self.layers = nn.ModuleList([
+    DecoderLayer(config),
+    DecoderLayer(config),
+])
+```
+
+第 0 层 attention 的 q_proj key 是：
+
+```text
+layers.0.self_attn.q_proj.weight
+```
+
+拆开看：
+
+```text
+layers      # self.layers
+0           # ModuleList 第 0 个元素
+self_attn   # DecoderLayer.self_attn
+q_proj      # GQAAttention.q_proj
+weight      # nn.Linear.weight
+```
+
+#### 4. Parameter 和 buffer 也会注册
+
+直接挂到 `self` 上的参数：
+
+```python
+self.scale = nn.Parameter(torch.ones(3))
+```
+
+会进入 state_dict：
+
+```text
+scale
+```
+
+buffer 也类似：
+
+```python
+self.register_buffer("mask", torch.ones(3))
+```
+
+会进入 state_dict：
+
+```text
+mask
+```
+
+区别是：
+
+```text
+Parameter 会被 optimizer 更新；buffer 不会被 optimizer 更新，但属于模型状态。
+```
+
+#### 5. 普通局部变量不会注册
+
+下面这种不会进 state_dict：
+
+```python
+def __init__(self):
+    linear = nn.Linear(3, 2)
+```
+
+因为它只是局部变量，函数结束就没了。
+
+必须写成：
+
+```python
+self.linear = nn.Linear(3, 2)
+```
+
+PyTorch 才会通过 `nn.Module.__setattr__` 自动注册到：
+
+```text
+self._modules["linear"]
+```
+
+类似地：
+
+```text
+nn.Parameter -> self._parameters
+register_buffer -> self._buffers
+```
+
+`state_dict()` 就是递归遍历这些注册表并拼出 key。
+
+#### 6. 本项目为什么要对齐 HF 字段名
+
+T8 里：
+
+```python
+class Qwen3ForCausalLM(nn.Module):
+    self.model = Qwen3Model(config)
+    self.lm_head = nn.Linear(...)
+```
+
+会生成：
+
+```text
+model.embed_tokens.weight
+model.layers.0.self_attn.q_proj.weight
+model.norm.weight
+lm_head.weight
+```
+
+这正好对齐 HuggingFace `Qwen3ForCausalLM` checkpoint key。
+
+如果写成：
+
+```python
+self.backbone = Qwen3Model(config)
+```
+
+key 会变成：
+
+```text
+backbone.embed_tokens.weight
+backbone.layers.0.self_attn.q_proj.weight
+backbone.norm.weight
+```
+
+就需要额外映射：
+
+```text
+model.layers.0.xxx -> backbone.layers.0.xxx
+```
+
+因此，`self.model` / `self.lm_head` / `self.self_attn` / `self.q_proj` 这些名字不是随便起的，
+它们直接决定是否能用最少映射加载 HF 权重。
+
+**本项目应用**：T4-T8 的模块命名、T7/T8 的 `load_state_dict` / `model.safetensors` key 映射。
 
 ### tie_word_embeddings
 

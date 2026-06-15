@@ -1,21 +1,10 @@
 """Unit tests for inferlite.model.weights.
 
-T7 目标：从 HF/ModelScope 本地目录加载 config.json + model.safetensors，
-构造 Qwen3Model backbone，并把 HF key 映射到 inferlite key 后灌入权重。
+T7/T8 的权重加载目标：
+- backbone 模式：HF `model.xxx` -> inferlite `Qwen3Model` 的 `xxx`，跳过 `lm_head.weight`。
+- causal_lm 模式：HF key 原样加载到 `Qwen3ForCausalLM`，包括 `lm_head.weight`。
 
-为什么这些测试不用真实 Qwen3-0.6B 文件？
-- 单测应稳定、快速、可离线运行。
-- 真实 0.6B 权重很大，并且依赖本机缓存路径。
-- 所以这里用 tiny Qwen3Model 自造一个 fake HF 目录：
-
-  ```text
-  tmp/fake-qwen3/
-  ├── config.json
-  └── model.safetensors
-  ```
-
-fake `model.safetensors` 的内容来自一个 source Qwen3Model 的 state_dict，
-只是把 key 加上 HF 的 `model.` 前缀，用来模拟真实 HF checkpoint。
+这些测试使用 tiny fake HF 目录，避免依赖真实 Qwen3-0.6B 权重缓存。
 
 运行：
   uv run pytest tests/unit/test_weights.py -q
@@ -29,8 +18,9 @@ import torch
 from safetensors.torch import save_file
 
 from inferlite.config import ModelConfig
-from inferlite.model.qwen3 import Qwen3Model
+from inferlite.model.qwen3 import Qwen3ForCausalLM, Qwen3Model
 from inferlite.model.weights import (
+    load_causal_lm_from_hf,
     load_from_hf,
     load_weights_into_model,
     map_hf_key_to_inferlite_key,
@@ -55,15 +45,7 @@ def _tiny_model_config(num_hidden_layers: int = 1) -> ModelConfig:
 
 
 def _write_config_json(path: Path, cfg: ModelConfig) -> None:
-    """写一个 HF 风格 `config.json`，供 `ModelConfig.from_json` 读取。
-
-    这里手写 JSON，而不是直接 pickle/dataclass，是为了覆盖 T7 高层入口真实会走的路径：
-
-    ```text
-    load_from_hf(model_dir)
-      -> ModelConfig.from_json(model_dir / "config.json")
-    ```
-    """
+    """写一个 HF 风格 `config.json`，供 `ModelConfig.from_json` 读取。"""
     data = {
         "hidden_size": cfg.hidden_size,
         "num_hidden_layers": cfg.num_hidden_layers,
@@ -80,85 +62,83 @@ def _write_config_json(path: Path, cfg: ModelConfig) -> None:
     path.write_text(json.dumps(data), encoding="utf-8")
 
 
-def _hf_state_dict_from_model(model: Qwen3Model) -> dict[str, torch.Tensor]:
-    """把 inferlite state_dict 伪装成 HF backbone state_dict。
-
-    inferlite key：
-
-    ```text
-    layers.0.self_attn.q_proj.weight
-    norm.weight
-    ```
-
-    fake HF key：
-
-    ```text
-    model.layers.0.self_attn.q_proj.weight
-    model.norm.weight
-    ```
-
-    `detach().clone()` 的作用：
-    - detach：测试数据不需要梯度图。
-    - clone：避免 source/target 参数共享同一块内存，保证测试是在验证“加载复制”。
-    """
+def _hf_backbone_state_dict_from_model(model: Qwen3Model) -> dict[str, torch.Tensor]:
+    """把裸 Qwen3Model state_dict 伪装成 HF backbone state_dict。"""
     return {f"model.{key}": tensor.detach().clone() for key, tensor in model.state_dict().items()}
 
 
-def _write_fake_hf_dir(model_dir: Path, model: Qwen3Model, cfg: ModelConfig) -> None:
-    """写出一个最小 fake HF 模型目录。
+def _hf_causal_lm_state_dict_from_model(model: Qwen3ForCausalLM) -> dict[str, torch.Tensor]:
+    """Qwen3ForCausalLM 的 key 与 HF CausalLM key 基本一致，直接 clone 即可。"""
+    return {key: tensor.detach().clone() for key, tensor in model.state_dict().items()}
 
-    目录内容：
 
-    ```text
-    fake-qwen3/
-    ├── config.json
-    └── model.safetensors
-    ```
-
-    `save_file` 是 `safetensors.torch` 的写入函数，对应实现里的 `load_file`。
-    这样单测覆盖的是和真实权重相同的文件格式，而不是临时 Python dict。
-    """
+def _write_fake_backbone_hf_dir(model_dir: Path, model: Qwen3Model, cfg: ModelConfig) -> None:
+    """写出 fake backbone HF 目录：config.json + model.safetensors。"""
     model_dir.mkdir(parents=True, exist_ok=True)
     _write_config_json(model_dir / "config.json", cfg)
-    hf_state_dict = _hf_state_dict_from_model(model)
-    # T7 backbone 没有 lm_head；这里故意加入该 key，验证加载时会显式跳过。
-    # 如果没有这个测试，未来很容易不小心把 lm_head 当作 unexpected key 报错。
+    hf_state_dict = _hf_backbone_state_dict_from_model(model)
+    # backbone 模式应跳过 lm_head.weight。
     hf_state_dict["lm_head.weight"] = model.embed_tokens.weight.detach().clone()
     save_file(hf_state_dict, model_dir / "model.safetensors")
 
 
-def test_map_hf_key_to_inferlite_key_removes_model_prefix():
-    """HF backbone key 应去掉外层 `model.` 前缀。"""
+def _write_fake_causal_lm_hf_dir(
+    model_dir: Path,
+    model: Qwen3ForCausalLM,
+    cfg: ModelConfig,
+) -> None:
+    """写出 fake CausalLM HF 目录，包含 backbone 权重和 lm_head.weight。"""
+    model_dir.mkdir(parents=True, exist_ok=True)
+    _write_config_json(model_dir / "config.json", cfg)
+    hf_state_dict = _hf_causal_lm_state_dict_from_model(model)
+    save_file(hf_state_dict, model_dir / "model.safetensors")
+
+
+def test_map_hf_key_to_inferlite_key_backbone_removes_model_prefix():
+    """backbone 模式：HF `model.xxx` 应映射到裸 Qwen3Model 的 `xxx`。"""
     assert (
-        map_hf_key_to_inferlite_key("model.layers.0.self_attn.q_proj.weight")
+        map_hf_key_to_inferlite_key(
+            "model.layers.0.self_attn.q_proj.weight",
+            target="backbone",
+        )
         == "layers.0.self_attn.q_proj.weight"
     )
-    assert map_hf_key_to_inferlite_key("model.norm.weight") == "norm.weight"
+    assert map_hf_key_to_inferlite_key("model.norm.weight", target="backbone") == "norm.weight"
 
 
-def test_map_hf_key_to_inferlite_key_skips_lm_head():
-    """T7 只加载 Qwen3Model backbone，因此 lm_head.weight 应显式跳过。"""
-    assert map_hf_key_to_inferlite_key("lm_head.weight") is None
+def test_map_hf_key_to_inferlite_key_backbone_skips_lm_head():
+    """backbone 模式：裸 Qwen3Model 没有 lm_head，因此跳过 lm_head.weight。"""
+    assert map_hf_key_to_inferlite_key("lm_head.weight", target="backbone") is None
 
 
-def test_load_weights_into_model_loads_fake_safetensors(tmp_path: Path):
-    """底层 API 应能把 fake safetensors 权重灌入已有模型。
+def test_map_hf_key_to_inferlite_key_causal_lm_keeps_keys():
+    """causal_lm 模式：完整 Qwen3ForCausalLM key 与 HF key 一致，应原样保留。"""
+    assert (
+        map_hf_key_to_inferlite_key(
+            "model.layers.0.self_attn.q_proj.weight",
+            target="causal_lm",
+        )
+        == "model.layers.0.self_attn.q_proj.weight"
+    )
+    assert map_hf_key_to_inferlite_key("lm_head.weight", target="causal_lm") == "lm_head.weight"
 
-    测试方法：
-    1. source 模型提供“期望权重”。
-    2. target 模型随机初始化。
-    3. 把 source 权重写成 fake HF safetensors。
-    4. 调用 load_weights_into_model(target, model_dir)。
-    5. target 每个 state_dict tensor 都应等于 source。
-    """
+
+def test_map_hf_key_to_inferlite_key_rejects_unknown_target():
+    """非法 target 应早失败，避免拼写错误静默走错映射逻辑。"""
+    with pytest.raises(ValueError, match="Unknown weight loading target"):
+        map_hf_key_to_inferlite_key("model.norm.weight", target="bad")
+
+
+def test_load_weights_into_model_loads_fake_backbone_safetensors(tmp_path: Path):
+    """底层 API 应能把 fake backbone safetensors 权重灌入已有 Qwen3Model。"""
     torch.manual_seed(0)
     cfg = _tiny_model_config()
     source = Qwen3Model(cfg)
     target = Qwen3Model(cfg)
     model_dir = tmp_path / "fake-qwen3"
-    _write_fake_hf_dir(model_dir, source, cfg)
+    _write_fake_backbone_hf_dir(model_dir, source, cfg)
 
-    load_weights_into_model(target, model_dir)
+    load_weights_into_model(target, model_dir, target="backbone")
 
     for key, expected in source.state_dict().items():
         actual = target.state_dict()[key]
@@ -166,21 +146,36 @@ def test_load_weights_into_model_loads_fake_safetensors(tmp_path: Path):
 
 
 def test_load_from_hf_reads_config_constructs_model_and_loads_weights(tmp_path: Path):
-    """高层 API 应覆盖 config -> model -> weights -> return model 全链路。"""
+    """backbone 高层 API 应覆盖 config -> Qwen3Model -> weights -> return model。"""
     torch.manual_seed(0)
     cfg = _tiny_model_config(num_hidden_layers=2)
     source = Qwen3Model(cfg)
     model_dir = tmp_path / "fake-qwen3"
-    _write_fake_hf_dir(model_dir, source, cfg)
+    _write_fake_backbone_hf_dir(model_dir, source, cfg)
 
     loaded = load_from_hf(model_dir)
 
-    # 先验证“结构来自 config.json”。
     assert isinstance(loaded, Qwen3Model)
     assert loaded.config == cfg
     assert len(loaded.layers) == cfg.num_hidden_layers
+    for key, expected in source.state_dict().items():
+        actual = loaded.state_dict()[key]
+        assert torch.equal(actual, expected), key
 
-    # 再验证“参数来自 model.safetensors”。
+
+def test_load_causal_lm_from_hf_loads_backbone_and_lm_head(tmp_path: Path):
+    """CausalLM 高层 API 应一次性加载 `model.xxx` 和 `lm_head.weight`。"""
+    torch.manual_seed(0)
+    cfg = _tiny_model_config(num_hidden_layers=2)
+    source = Qwen3ForCausalLM(cfg)
+    model_dir = tmp_path / "fake-qwen3-causal-lm"
+    _write_fake_causal_lm_hf_dir(model_dir, source, cfg)
+
+    loaded = load_causal_lm_from_hf(model_dir)
+
+    assert isinstance(loaded, Qwen3ForCausalLM)
+    assert loaded.config == cfg
+    assert tuple(loaded.lm_head.weight.shape) == (cfg.vocab_size, cfg.hidden_size)
     for key, expected in source.state_dict().items():
         actual = loaded.state_dict()[key]
         assert torch.equal(actual, expected), key
@@ -193,14 +188,12 @@ def test_load_weights_into_model_raises_on_shape_mismatch(tmp_path: Path):
     model_dir = tmp_path / "fake-qwen3"
     model_dir.mkdir()
 
-    hf_state_dict = _hf_state_dict_from_model(model)
-    # embed_tokens.weight 正确 shape 应是 [vocab_size, hidden_size]。
-    # 这里故意写成 [1, 1]，验证实现会抛出清晰的 ValueError。
+    hf_state_dict = _hf_backbone_state_dict_from_model(model)
     hf_state_dict["model.embed_tokens.weight"] = torch.zeros(1, 1)
     save_file(hf_state_dict, model_dir / "model.safetensors")
 
     with pytest.raises(ValueError, match="Shape mismatch"):
-        load_weights_into_model(model, model_dir)
+        load_weights_into_model(model, model_dir, target="backbone")
 
 
 def test_load_weights_into_model_raises_on_unexpected_key_when_strict(tmp_path: Path):
@@ -210,14 +203,12 @@ def test_load_weights_into_model_raises_on_unexpected_key_when_strict(tmp_path: 
     model_dir = tmp_path / "fake-qwen3"
     model_dir.mkdir()
 
-    hf_state_dict = _hf_state_dict_from_model(model)
-    # 这个 key 映射后会变成 `not_a_real_weight`，当前 Qwen3Model 没有这个参数。
-    # 它不是 lm_head.weight 这种任务边界内允许跳过的 key，所以 strict=True 应失败。
+    hf_state_dict = _hf_backbone_state_dict_from_model(model)
     hf_state_dict["model.not_a_real_weight"] = torch.zeros(1)
     save_file(hf_state_dict, model_dir / "model.safetensors")
 
     with pytest.raises(KeyError, match="Unexpected HF weight key"):
-        load_weights_into_model(model, model_dir, strict=True)
+        load_weights_into_model(model, model_dir, target="backbone", strict=True)
 
 
 def test_load_weights_into_model_raises_when_safetensors_missing(tmp_path: Path):

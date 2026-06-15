@@ -221,3 +221,73 @@ class Qwen3Model(nn.Module):
         # 这是 Qwen3Model 输出前的最后归一化；lm_head/logits 会在后续 T8 接在它后面。
         hidden_states = self.norm(hidden_states)
         return hidden_states
+
+
+class Qwen3ForCausalLM(nn.Module):
+    """Qwen3 causal language modeling 外壳：Qwen3Model + lm_head。
+
+    这一层对应 transformers 里的 `Qwen3ForCausalLM`，它不是新的 Transformer block，
+    而是在 T6 的 `Qwen3Model` backbone 后面接一个“语言模型头”。
+
+    数据流：
+
+        input_ids [B, T]
+          -> self.model
+          -> hidden_states [B, T, hidden_size]
+          -> self.lm_head
+          -> logits [B, T, vocab_size]
+
+    为什么不把 lm_head 直接塞进 Qwen3Model？
+    - `Qwen3Model` 是通用 backbone，只负责输出 hidden states。
+    - `Qwen3ForCausalLM` 是具体任务外壳，用 hidden states 做 next-token prediction。
+    - 这样结构和 HF 对齐，state_dict key 也自然对齐：
+        model.layers.0...  属于 backbone
+        lm_head.weight     属于 CausalLM 任务头
+    """
+
+    def __init__(self, config: ModelConfig) -> None:
+        super().__init__()
+        self.config: ModelConfig = config
+        self.vocab_size: int = config.vocab_size
+
+        # backbone 主体。字段名必须叫 `model`，这样 CausalLM 的 state_dict key 会变成：
+        #   model.embed_tokens.weight
+        #   model.layers.0.self_attn.q_proj.weight
+        #   model.norm.weight
+        # 这正好和 HF Qwen3ForCausalLM checkpoint 的 key 对齐。
+        self.model: Qwen3Model = Qwen3Model(config)
+
+        # lm_head: hidden_size -> vocab_size。
+        # nn.Linear(in_features, out_features) 的 weight shape 是 [out_features, in_features]，
+        # 所以这里 lm_head.weight 的 shape 是 [vocab_size, hidden_size]。
+        # 对 Qwen3-0.6B 来说就是 [151936, 1024]。
+        self.lm_head: nn.Linear = nn.Linear(
+            config.hidden_size,
+            config.vocab_size,
+            bias=False,
+        )
+
+    @override
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        position_ids: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """执行 CausalLM 前向，返回每个位置的 vocab logits。
+
+        Args:
+            input_ids: [B, T]
+            position_ids: [B, T]，可选。不传时由内部 Qwen3Model 自动生成 0..T-1。
+
+        Returns:
+            logits: [B, T, vocab_size]
+                logits[b, t, v] 表示第 b 条序列、第 t 个位置对词表 token v 的未归一化分数。
+        """
+        # Step 1: 先走 backbone，得到每个 token 的上下文表示。
+        # 这里用关键字传 position_ids，避免未来 Qwen3Model.forward 参数顺序变化造成误传。
+        hidden_states = self.model(input_ids, position_ids=position_ids)
+
+        # Step 2: 对每个 token 位置独立做线性投影到词表维度。
+        # lm_head 不混合 token 之间的信息；token 间信息已经在前面的 decoder layers 里完成。
+        logits = self.lm_head(hidden_states)
+        return logits
