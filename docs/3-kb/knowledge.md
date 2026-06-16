@@ -10,13 +10,13 @@
 
 > 自动维护：每次新增/删除卡片时同步更新本段。最后更新：2026-06-09。
 
-**总览**：4 类共 **24 张** knowledge 卡片 + 4 条 lessons + 3 个 ADR。
+**总览**：4 类共 **25 张** knowledge 卡片 + 4 条 lessons + 3 个 ADR。
 
 | 章节 | 卡片数 | 列表（点击跳转） |
 | --- | --- | --- |
 | **Papers** | 5 | [RMSNorm](#rmsnorm-zhang-sennrich-neurips-2019) · [Qwen3 Tech Report](#qwen3-tech-report) · [SwiGLU](#swiglu-shazeer-2020) · [RoPE](#rope-su-et-al-2021) · [GQA](#gqa-ainslie-et-al-2023) |
 | **Libraries** | 6 | [transformers Qwen3 模块](#transformers-qwen3-ground-truth) · [vLLM Qwen3 weight loading](#vllm-qwen3-weight-loading) · [transformers 5 核心对象](#transformers-hf) · [pytest](#pytest-api) · [modelscope](#modelscope-snapshot_download) · [huggingface_hub 1.x](#huggingface_hub-1x) |
-| **Concepts** | 8 | [upcast fp32](#upcast-to-fp32) · [数值对齐策略](#numeric-alignment-strategy) · [PyTorch state_dict 命名规则](#pytorch-state_dict-命名规则) · [tie_word_embeddings](#tie_word_embeddings) · [形状速查](#shape-cheatsheet) · [推理上下文](#inference-context) · [Python dataclass](#python-dataclass) · [Factory pattern](#factory-pattern) |
+| **Concepts** | 9 | [upcast fp32](#upcast-to-fp32) · [数值对齐策略](#numeric-alignment-strategy) · [generate API 与 engine 分层](#generate-api-与-engine-分层) · [PyTorch state_dict 命名规则](#pytorch-state_dict-命名规则) · [tie_word_embeddings](#tie_word_embeddings) · [形状速查](#shape-cheatsheet) · [推理上下文](#inference-context) · [Python dataclass](#python-dataclass) · [Factory pattern](#factory-pattern) |
 | **Tools** | 5 | [uv](#uvpython) · [make](#make) · [ruff](#rufflint-format) · [pre-commit](#pre-commitcommit) · [pytest-mark / CI](#pytest-mark-ci-matrix) |
 
 **已沉淀的 lessons**（[详见 lessons.md](./lessons.md)）：
@@ -705,6 +705,130 @@ hidden_size / num_attention_heads = 1024 / 16 = 64
 | reference 版本漂移 | 本地/链接看到的源码不一致 | 用固定 commit 链接 |
 
 **本项目应用**：M1·P1 全部模块。
+
+### generate API 与 engine 分层
+
+**一句话**：Transformers 把 `generate()` 挂在 model 上是用户友好的 API 设计；inferlite 把 step/generate 拆到 `engine` 层，是为了学习和实现推理引擎分层。
+
+#### 1. Transformers 里的 `model.generate()` 从哪里来
+
+在 HuggingFace Transformers 中，用户通常这样生成：
+
+```python
+outputs = model.generate(input_ids, max_new_tokens=10)
+```
+
+看起来 `generate()` 是模型自己的方法，但它通常来自通用的 `GenerationMixin`：
+
+```text
+Qwen3ForCausalLM
+  -> forward(): 模型结构计算 logits
+  -> GenerationMixin.generate(): 通用生成流程
+```
+
+也就是说：
+
+```text
+forward = 神经网络计算
+生成循环 = mixin 提供的通用推理流程
+```
+
+HF 把它包装成 `model.generate(...)`，主要是为了用户调用简单。
+
+#### 2. generate 内部的最小核心
+
+忽略 beam search、top-p、KV cache、stopping criteria 等复杂功能后，`generate()` 的核心循环可以简化成：
+
+```python
+for _ in range(max_new_tokens):
+    outputs = model(input_ids)
+    logits = outputs.logits
+
+    next_token_logits = logits[:, -1, :]
+    next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
+
+    input_ids = torch.cat([input_ids, next_token], dim=1)
+```
+
+最关键的一步是：
+
+```python
+next_token_logits = logits[:, -1, :]
+```
+
+因为 causal LM 的 logits shape 是：
+
+```text
+[B, T, vocab_size]
+```
+
+生成下一个 token 时，只使用当前序列最后一个位置的 logits。
+
+#### 3. inferlite 为什么拆出 EngineCore
+
+inferlite 不是直接复刻 HF 的 API 形态，而是更偏推理引擎分层：
+
+```text
+model   : input_ids -> logits
+sampler : logits [B, V] -> next_token [B, 1]
+engine  : 调 model、取最后位置、调 sampler、维护生成流程
+```
+
+T10 的 `EngineCore.step()` 对应 HF `generate()` 内部的一步 decode：
+
+```python
+logits = self.model(input_ids)
+next_token_logits = logits[:, -1, :]
+next_token = self.sampler(next_token_logits)
+return next_token
+```
+
+它不是 Transformer block，不是 attention，也不是 MLP，而是推理流程控制。
+
+#### 4. 为什么不把 generate 先写进 Qwen3ForCausalLM
+
+如果把生成逻辑直接写进 model：
+
+```python
+model.generate(input_ids)
+```
+
+短期调用方便，但会把模型结构和推理调度耦合在一起。后续要做：
+
+```text
+KV cache
+batching
+continuous batching
+request scheduling
+streaming
+paged attention
+```
+
+这些都更像 engine/runtime 的职责，而不是模型 forward 的职责。
+
+因此 inferlite 当前采用：
+
+```python
+engine = EngineCore(model, sampler)
+next_token = engine.step(input_ids)
+```
+
+后续如果需要用户友好 API，可以再额外包一层：
+
+```python
+def generate(model, input_ids, max_new_tokens): ...
+```
+
+或者在模型上提供轻量 `generate` 糖衣，但底层仍调用 engine。
+
+#### 5. 两种设计取舍
+
+| 设计 | 代表 | 优点 | 代价 |
+| --- | --- | --- | --- |
+| `model.generate(...)` | Transformers | 用户 API 简单 | 生成流程藏在 model/mixin 后面 |
+| `engine.step/generate(...)` | inferlite / vLLM 风格 | 分层清晰，利于 KV cache / batching / scheduler | API 比一行 model.generate 多一层 |
+
+**本项目应用**：T9 `GreedySampler`、T10 `EngineCore.step()`、后续 generate loop / KV cache / batching。
 
 ### PyTorch state_dict 命名规则
 

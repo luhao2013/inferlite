@@ -1,5 +1,16 @@
-"""Engine-facing protocols and runtime helpers."""
+"""Engine-facing protocols and runtime helpers.
 
+这个包对外暴露 engine 层的公共 API。外部代码优先使用：
+
+    from inferlite.engine import EngineCore, LLMModel
+
+而不是依赖内部文件路径：
+
+    from inferlite.engine.core import EngineCore
+    from inferlite.engine.protocol import LLMModel
+"""
+
+from inferlite.engine.core import EngineCore
 from inferlite.engine.protocol import LLMModel
 
-__all__ = ["LLMModel"]
+__all__ = ["EngineCore", "LLMModel"]

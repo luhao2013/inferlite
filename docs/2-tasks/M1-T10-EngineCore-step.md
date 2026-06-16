@@ -111,6 +111,32 @@ logits 是 [B, T, V]
 
 “取最后位置 + 调 model + 调 sampler”是推理流程调度逻辑，属于 EngineCore。
 
+## T12 前置优化：只计算最后 token 的 lm_head
+
+T10 当前先使用教学版最小实现：
+
+```python
+logits = self.model(input_ids)      # [B, T, V]
+next_token_logits = logits[:, -1, :]
+```
+
+这会让 `Qwen3ForCausalLM` 对整个序列的所有位置都计算 `lm_head`。但单步生成实际只需要最后一个位置：
+
+```text
+hidden_states[:, -1, :] -> lm_head -> next_token_logits [B, V]
+```
+
+因此将以下优化规划到 **T12 前置优化**，在真实 Qwen3-0.6B smoke test 前完成：
+
+```text
+Qwen3ForCausalLM.forward 支持 logits_to_keep=1
+LLMModel Protocol 视需要扩展 logits_to_keep
+EngineCore.step 使用 model(input_ids, logits_to_keep=1)
+验证 full_logits[:, -1:, :] == optimized_logits
+```
+
+T10 不做该优化，避免把“step 语义打通”和“lm_head 性能优化”混在一张卡里。
+
 ## L0 测试清单
 
 | # | 测什么 | Ground truth | 容差 |
