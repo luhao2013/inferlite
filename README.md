@@ -83,7 +83,8 @@ flowchart LR
   - ✅ T8 L1 logits 对齐（14/14 T8 单测）
   - ✅ T9 LLMModel Protocol + GreedySampler（4/4 单测）
   - ✅ T10 EngineCore.step() 三段式（5/5 单测）
-  - 🟡 T11 CLI + L2 e2e
+  - ✅ T11 CLI + L2 e2e（5/5 单测）
+  - 🟡 T12-pre Last-token logits optimization
 - ⬜ M2 KV Cache · M3 Continuous Batching · M4 PagedAttention · M5 API+SSE
 - ⬜ M6+ MoE / Spec Decoding / Triton / VLM …
 

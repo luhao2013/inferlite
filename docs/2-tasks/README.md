@@ -25,8 +25,8 @@
 | --- | --- | --- |
 | T9 | [M1-T9-LLMModel-GreedySampler.md](./M1-T9-LLMModel-GreedySampler.md) | ✅ |
 | T10 | [M1-T10-EngineCore-step.md](./M1-T10-EngineCore-step.md) | ✅ |
-| T11 | [M1-T11-CLI-L2-e2e.md](./M1-T11-CLI-L2-e2e.md) | 🟡 |
-| T12-pre | — T12 前置优化：last-token logits | ⬜ |
+| T11 | [M1-T11-CLI-L2-e2e.md](./M1-T11-CLI-L2-e2e.md) | ✅ |
+| T12-pre | [M1-T12-pre-last-token-logits.md](./M1-T12-pre-last-token-logits.md) | 🟡 |
 
 ## 任务卡模板（7 字段）
 
