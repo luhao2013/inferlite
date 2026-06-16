@@ -17,13 +17,13 @@
 | T5 | [M1-T5-DecoderLayer.md](./M1-T5-DecoderLayer.md) | ✅ |
 | T6 | [M1-T6-Qwen3Model.md](./M1-T6-Qwen3Model.md) | ✅ |
 | T7 | [M1-T7-WeightMap-load-from-hf.md](./M1-T7-WeightMap-load-from-hf.md) | ✅ |
-| T8 | [M1-T8-L1-logits-alignment.md](./M1-T8-L1-logits-alignment.md) | 🟡 |
+| T8 | [M1-T8-L1-logits-alignment.md](./M1-T8-L1-logits-alignment.md) | ✅ |
 
 ## M1 Phase 2（出字）闭环
 
 | ID | 文件 | 状态 |
 | --- | --- | --- |
-| T9 | — 开工时再创建 | ⬜ |
+| T9 | [M1-T9-LLMModel-GreedySampler.md](./M1-T9-LLMModel-GreedySampler.md) | 🟡 |
 | T10 | — 开工时再创建 | ⬜ |
 | T11 | — 开工时再创建 | ⬜ |
 
