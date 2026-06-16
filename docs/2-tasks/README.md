@@ -23,8 +23,8 @@
 
 | ID | 文件 | 状态 |
 | --- | --- | --- |
-| T9 | [M1-T9-LLMModel-GreedySampler.md](./M1-T9-LLMModel-GreedySampler.md) | 🟡 |
-| T10 | — 开工时再创建 | ⬜ |
+| T9 | [M1-T9-LLMModel-GreedySampler.md](./M1-T9-LLMModel-GreedySampler.md) | ✅ |
+| T10 | [M1-T10-EngineCore-step.md](./M1-T10-EngineCore-step.md) | 🟡 |
 | T11 | — 开工时再创建 | ⬜ |
 
 ## 任务卡模板（7 字段）
