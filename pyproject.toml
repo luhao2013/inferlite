@@ -16,6 +16,9 @@ dependencies = [
     "modelscope>=1.18,<2",  # CN-friendly model hub; preflight uses it by default
 ]
 
+[project.scripts]
+inferlite-generate = "inferlite.cli:main"
+
 [dependency-groups]
 dev = [
     "pytest>=8,<9",

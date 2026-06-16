@@ -10,13 +10,13 @@
 
 > 自动维护：每次新增/删除卡片时同步更新本段。最后更新：2026-06-09。
 
-**总览**：4 类共 **25 张** knowledge 卡片 + 4 条 lessons + 3 个 ADR。
+**总览**：4 类共 **26 张** knowledge 卡片 + 4 条 lessons + 3 个 ADR。
 
 | 章节 | 卡片数 | 列表（点击跳转） |
 | --- | --- | --- |
 | **Papers** | 5 | [RMSNorm](#rmsnorm-zhang-sennrich-neurips-2019) · [Qwen3 Tech Report](#qwen3-tech-report) · [SwiGLU](#swiglu-shazeer-2020) · [RoPE](#rope-su-et-al-2021) · [GQA](#gqa-ainslie-et-al-2023) |
 | **Libraries** | 6 | [transformers Qwen3 模块](#transformers-qwen3-ground-truth) · [vLLM Qwen3 weight loading](#vllm-qwen3-weight-loading) · [transformers 5 核心对象](#transformers-hf) · [pytest](#pytest-api) · [modelscope](#modelscope-snapshot_download) · [huggingface_hub 1.x](#huggingface_hub-1x) |
-| **Concepts** | 9 | [upcast fp32](#upcast-to-fp32) · [数值对齐策略](#numeric-alignment-strategy) · [generate API 与 engine 分层](#generate-api-与-engine-分层) · [PyTorch state_dict 命名规则](#pytorch-state_dict-命名规则) · [tie_word_embeddings](#tie_word_embeddings) · [形状速查](#shape-cheatsheet) · [推理上下文](#inference-context) · [Python dataclass](#python-dataclass) · [Factory pattern](#factory-pattern) |
+| **Concepts** | 10 | [upcast fp32](#upcast-to-fp32) · [数值对齐策略](#numeric-alignment-strategy) · [generate API 与 engine 分层](#generate-api-与-engine-分层) · [prompt 格式对生成行为的影响](#prompt-格式对生成行为的影响) · [PyTorch state_dict 命名规则](#pytorch-state_dict-命名规则) · [tie_word_embeddings](#tie_word_embeddings) · [形状速查](#shape-cheatsheet) · [推理上下文](#inference-context) · [Python dataclass](#python-dataclass) · [Factory pattern](#factory-pattern) |
 | **Tools** | 5 | [uv](#uvpython) · [make](#make) · [ruff](#rufflint-format) · [pre-commit](#pre-commitcommit) · [pytest-mark / CI](#pytest-mark-ci-matrix) |
 
 **已沉淀的 lessons**（[详见 lessons.md](./lessons.md)）：
@@ -829,6 +829,681 @@ def generate(model, input_ids, max_new_tokens): ...
 | `engine.step/generate(...)` | inferlite / vLLM 风格 | 分层清晰，利于 KV cache / batching / scheduler | API 比一行 model.generate 多一层 |
 
 **本项目应用**：T9 `GreedySampler`、T10 `EngineCore.step()`、后续 generate loop / KV cache / batching。
+
+### prompt 格式对生成行为的影响
+
+**一句话**：同一个模型、同一套权重、同一个 generate loop，只改变输入 prompt 的格式，就可能显著改变输出行为。
+
+#### 1. 裸 prompt 的现象
+
+T11 CLI 最小闭环中，直接输入裸 prompt：
+
+```bash
+uv run inferlite-generate \
+  --model-dir ~/.cache/modelscope/hub/models/Qwen/Qwen3-0.6B \
+  --prompt "你是谁" \
+  --max-new-tokens 80
+```
+
+观察到输出类似：
+
+```text
+你是谁？我需要什么帮助？我需要什么帮助？我需要什么帮助？...
+```
+
+这说明模型已经能生成 token，但它更像在做普通文本续写，而不是稳定进入“用户/助手对话”格式。
+
+原因：裸 prompt 没有告诉 chat/instruct 模型当前文本的角色边界：
+
+```text
+谁是 user？
+assistant 从哪里开始？
+回答应该在哪里结束？
+```
+
+因此模型可能根据预训练/指令数据里的高概率模式继续续写，容易重复。
+
+#### 2. 手写 chat template 的现象
+
+使用 ANSI-C quoting 手写 Qwen 风格对话模板时，输出明显进入 chat/thinking 格式。
+
+命令形态可以理解为：
+
+```bash
+uv run inferlite-generate \
+  --model-dir ~/.cache/modelscope/hub/models/Qwen/Qwen3-0.6B \
+  --prompt "<|im_start|>user\\n你是谁\\n<|im_end|>\\n<|im_start|>assistant\\n" \
+  --max-new-tokens 300
+```
+
+观察到输出类似：
+
+```text
+user
+你是谁
+
+assistant
+<think>
+...
+</think>
+
+我是AI助手，专注于提供帮助和解答问题。...
+Human: 你是一个AI助手吗？
+...
+```
+
+这说明 chat template 对模型行为有非常强的引导作用：
+
+```text
+裸 prompt          -> 普通续写/重复
+chat template      -> assistant 角色 + thinking 格式 + 正常回答
+```
+
+同一个模型没有变，变化来自输入 token 序列的结构。
+
+#### 3. 为什么仍然会重复或出现多个 `</think>`
+
+chat template 让模型进入正确格式，但当前 T11 generate 仍然是最小实现：
+
+```text
+greedy argmax
+无 EOS stopping
+无 <|im_end|> stop
+固定生成 max_new_tokens
+无 repetition penalty
+```
+
+所以模型完成一次回答后不会自动停，会继续续写训练数据中常见的对话格式，例如：
+
+```text
+Human: ...
+Assistant: ...
+</think>
+```
+
+语言模型不是 XML/HTML 解析器，不会维护 `<think>` 标签栈；它只是在逐 token 预测下一个高概率 token。因此可能出现：
+
+```text
+一个 <think>
+多个 </think>
+```
+
+这通常不是权重加载或 forward 明显错误，而是生成控制还不完整。
+
+#### 4. 工程启发
+
+对 chat/instruct 模型，prompt 格式本身就是模型行为控制的一部分：
+
+```text
+模型能力 = 权重 + tokenizer + prompt/template + decoding 控制
+```
+
+不能只看模型 forward 是否正确，还要关注：
+
+```text
+chat template
+special tokens
+EOS / stop token
+只输出新增文本
+sampling 策略
+```
+
+T11 之后应优先补：
+
+```text
+1. tokenizer.apply_chat_template
+2. eos_token_id / <|im_end|> stopping
+3. only-new-text 输出
+4. 后续再做 top-p/temperature/repetition penalty
+```
+
+#### 5. 本项目当前结论
+
+T11 真实 Qwen3-0.6B smoke 已经证明最小链路打通：
+
+```text
+local model dir
+  -> tokenizer
+  -> load_causal_lm_from_hf
+  -> Qwen3ForCausalLM
+  -> EngineCore.step
+  -> GreedySampler
+  -> generate loop
+  -> decode text
+```
+
+裸 prompt 与 chat template 输出差异很大，是后续 CLI 默认启用官方 `apply_chat_template` 的重要依据。
+
+**本项目应用**：T11 CLI/e2e、后续 EOS stopping、chat template helper、T12 真实模型 smoke test。
+
+### PyTorch state_dict 命名规则
+
+**一句话**：PyTorch 的 `state_dict` key 不是 tensor 自己天生有名字，而是由 `nn.Module` 上的属性路径递归生成。
+
+#### 1. 属性名决定 key 前缀
+
+```python
+class M(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.linear = nn.Linear(3, 2)
+```
+
+`M().state_dict().keys()` 会包含：
+
+```text
+linear.weight
+linear.bias
+```
+
+其中：
+
+```text
+linear  来自 self.linear
+weight   来自 nn.Linear 内部 Parameter 名
+bias     来自 nn.Linear 内部 Parameter 名
+```
+
+如果把字段名改成：
+
+```python
+self.query_projection = nn.Linear(...)
+```
+
+key 就会变成：
+
+```text
+query_projection.weight
+```
+
+所以模型字段命名会直接影响权重加载。
+
+#### 2. 嵌套模块会拼路径
+
+```python
+class A(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.block = B()
+
+class B(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.linear = nn.Linear(3, 2)
+```
+
+最终 key：
+
+```text
+block.linear.weight
+block.linear.bias
+```
+
+路径来自：
+
+```text
+self.block -> self.linear -> weight/bias
+```
+
+#### 3. ModuleList 使用数字下标
+
+```python
+self.layers = nn.ModuleList([
+    DecoderLayer(config),
+    DecoderLayer(config),
+])
+```
+
+第 0 层 attention 的 q_proj key 是：
+
+```text
+layers.0.self_attn.q_proj.weight
+```
+
+拆开看：
+
+```text
+layers      # self.layers
+0           # ModuleList 第 0 个元素
+self_attn   # DecoderLayer.self_attn
+q_proj      # GQAAttention.q_proj
+weight      # nn.Linear.weight
+```
+
+#### 4. Parameter 和 buffer 也会注册
+
+直接挂到 `self` 上的参数：
+
+```python
+self.scale = nn.Parameter(torch.ones(3))
+```
+
+会进入 state_dict：
+
+```text
+scale
+```
+
+buffer 也类似：
+
+```python
+self.register_buffer("mask", torch.ones(3))
+```
+
+会进入 state_dict：
+
+```text
+mask
+```
+
+区别是：
+
+```text
+Parameter 会被 optimizer 更新；buffer 不会被 optimizer 更新，但属于模型状态。
+```
+
+#### 5. 普通局部变量不会注册
+
+下面这种不会进 state_dict：
+
+```python
+def __init__(self):
+    linear = nn.Linear(3, 2)
+```
+
+因为它只是局部变量，函数结束就没了。
+
+必须写成：
+
+```python
+self.linear = nn.Linear(3, 2)
+```
+
+PyTorch 才会通过 `nn.Module.__setattr__` 自动注册到：
+
+```text
+self._modules["linear"]
+```
+
+类似地：
+
+```text
+nn.Parameter -> self._parameters
+register_buffer -> self._buffers
+```
+
+`state_dict()` 就是递归遍历这些注册表并拼出 key。
+
+#### 6. 本项目为什么要对齐 HF 字段名
+
+T8 里：
+
+```python
+class Qwen3ForCausalLM(nn.Module):
+    self.model = Qwen3Model(config)
+    self.lm_head = nn.Linear(...)
+```
+
+会生成：
+
+```text
+model.embed_tokens.weight
+model.layers.0.self_attn.q_proj.weight
+model.norm.weight
+lm_head.weight
+```
+
+这正好对齐 HuggingFace `Qwen3ForCausalLM` checkpoint key。
+
+如果写成：
+
+```python
+self.backbone = Qwen3Model(config)
+```
+
+key 会变成：
+
+```text
+backbone.embed_tokens.weight
+backbone.layers.0.self_attn.q_proj.weight
+backbone.norm.weight
+```
+
+就需要额外映射：
+
+```text
+model.layers.0.xxx -> backbone.layers.0.xxx
+```
+
+因此，`self.model` / `self.lm_head` / `self.self_attn` / `self.q_proj` 这些名字不是随便起的，
+它们直接决定是否能用最少映射加载 HF 权重。
+
+**本项目应用**：T4-T8 的模块命名、T7/T8 的 `load_state_dict` / `model.safetensors` key 映射。
+
+### tie_word_embeddings
+
+**一句话**：embed 矩阵 `[V, H]` 既当 input embedding 也当 output projection (lm_head)，省一份权重。
+
+**Qwen3-0.6B**：tied = True；>0.6B 是 False。所以不要硬编码。
+
+**实现**：
+```python
+logits = F.linear(hidden, self.embed_tokens.weight)   # 复用 embed.weight 作为 lm_head
+```
+
+不需要单独 `self.lm_head` 层。
+
+### 形状速查（背下来） { #shape-cheatsheet }
+
+| 张量 | 形状 | 含义 |
+| --- | --- | --- |
+| `input_ids` | `[B, T]` | int64 token ID |
+| `inputs_embeds` | `[B, T, H]` | 跳过 embed 直接喂浮点 |
+| 隐藏态 | `[B, T, H]` | 层间 |
+| logits | `[B, T, V]` | 词表分数 |
+| 下一 token | `[B, 1]` | argmax |
+
+**字母**：
+- B = batch（M1=1，M3 引入 batching）
+- T = seq length
+- H = hidden_size（Qwen3-0.6B=1024）
+- I = intermediate_size（=3072，仅 SwiGLU 中间）
+- V = vocab_size（=151936）
+- N = layers（=28）
+
+### 推理上下文管理 { #inference-context }
+
+```python
+with torch.no_grad():
+    out = model(...)
+# 等价 (更彻底):
+with torch.inference_mode():
+    out = model(...)
+```
+推理路径必须包，否则 MPS 显存翻倍。
+
+### Python dataclass
+
+**一句话**：`dataclass` 是 Python 给“主要用来存数据的类”准备的语法糖；它根据字段声明自动生成 `__init__` / `__repr__` / `__eq__`，让 `ModelConfig` 这种超参容器少写样板代码。
+
+#### 1. 不用 dataclass 会怎样
+
+```python
+class ModelConfig:
+    def __init__(self, hidden_size: int, num_hidden_layers: int, rms_norm_eps: float):
+        self.hidden_size = hidden_size
+        self.num_hidden_layers = num_hidden_layers
+        self.rms_norm_eps = rms_norm_eps
+```
+
+字段一多（T0 有 11 个）就容易漏赋值、顺序写错、比较不方便。
+
+#### 2. 用 dataclass
+
+```python
+from dataclasses import dataclass
+
+@dataclass
+class ModelConfig:
+    hidden_size: int
+    num_hidden_layers: int
+    rms_norm_eps: float
+```
+
+Python 自动生成：
+
+- `__init__`：可以 `ModelConfig(hidden_size=1024, ...)`
+- `__repr__`：打印时显示字段和值，便于 debug
+- `__eq__`：按字段内容比较，而不是按对象地址比较
+
+所以测试里可以直接写：
+
+```python
+assert ModelConfig.from_json(path) == ModelConfig.qwen3_0_6b()
+```
+
+这句成立的前提就是 `dataclass` 自动生成了字段级 `__eq__`。
+
+#### 3. `frozen=True`
+
+```python
+@dataclass(frozen=True)
+class ModelConfig:
+    hidden_size: int
+```
+
+表示对象创建后不可修改：
+
+```python
+cfg = ModelConfig(hidden_size=1024)
+cfg.hidden_size = 2048   # dataclasses.FrozenInstanceError
+```
+
+**为什么 config 要 frozen**：模型一旦按 `cfg.hidden_size=1024` 初始化，权重 shape 已经固定；如果运行中偷偷改成 2048，config 与真实模型结构会分裂，后续会出现很难排查的 shape bug。
+
+#### 4. 适用边界
+
+`dataclass` 适合：字段驱动、主要存数据、行为少的对象。
+
+典型例子：
+
+- `ModelConfig`
+- `SamplingParams`
+- `RequestState`
+- `BlockMeta`
+
+不适合：大量行为 + 复杂生命周期的核心执行对象，例如 `EngineCore` / `Scheduler` / `Qwen3Model(nn.Module)`。
+
+**本项目应用**：T0 `inferlite.config.ModelConfig`。
+
+### Factory pattern (经典工厂)
+
+**一句话**：Factory pattern 是“把对象创建逻辑封装成一个方法/函数”，调用方不用知道对象怎么组装，只拿到成品。
+
+T0 里有两个轻量工厂：
+
+```python
+cfg = ModelConfig.qwen3_0_6b()      # 从硬编码事实创建
+cfg = ModelConfig.from_json(path)   # 从 config.json 创建
+```
+
+#### 为什么不用调用方自己拼
+
+如果每个调用方都这么写：
+
+```python
+cfg = ModelConfig(
+    hidden_size=1024,
+    num_hidden_layers=28,
+    # ... 11 个字段 ...
+)
+```
+
+问题：
+
+1. magic number 到处散落
+2. 字段一变要全局改
+3. JSON 过滤 / dtype cast / head_dim fallback 逻辑会复制多份
+
+Factory 把这三件事收到一个地方：
+
+- `qwen3_0_6b()`：测试用，不依赖磁盘
+- `from_json()`：真实模型加载用，负责白名单过滤、`head_dim` 兜底、`rope_theta` cast float
+
+#### 本质
+
+Factory 不是高级设计模式，T0 里就是：**给“怎么创建一个合法 config”起一个名字**。
+
+**本项目应用**：
+
+- T0：`ModelConfig.qwen3_0_6b()` / `ModelConfig.from_json()`
+- T7：`load_from_hf(path)` 会先调用 `ModelConfig.from_json(path / "config.json")`
+
+
+---
+
+## Tools
+
+### uv（Python 包管理器）
+
+Astral 出品，Rust 写。取代 pyenv + venv + pip + pip-tools。
+
+- 装 PyTorch + transformers：pip 60s，uv 5s
+- 一站式：Python 版本 + venv + 依赖锁定
+- lockfile 默认开（`uv.lock` commit 进 git）
+- 原生支持 PyTorch 索引源切换（cpu / cu121 / cu124）
+
+**常用命令**：
+```bash
+uv sync                    # 装依赖
+uv sync --frozen           # 严格按 lock
+uv run pytest              # 在 venv 跑命令
+uv add "torch>=2.5"        # 加依赖
+uv add --dev pytest-xdist  # dev 依赖
+uv lock --upgrade <pkg>    # 升级单包
+```
+
+**`uv.lock` 重要性**：
+- `pyproject.toml` 说"我要 torch>=2.4"
+- `uv.lock` 锁定"实际装的是 torch==2.7.0 + 全部传递依赖 + sha256"
+- 必须 commit（保证跨机器/时间复现）
+
+### make（任务运行器）
+
+Unix 自带（1976）。`Makefile` 定义"任务名 → shell 命令"。
+
+```makefile
+setup:
+\tbash scripts/setup.sh
+test:
+\tuv run pytest
+```
+
+**关键**：执行行**必须 Tab 缩进**，不能空格。
+
+### ruff（lint + format）
+
+取代 flake8 + black + isort。`make lint` / `make fmt`。配置在 `pyproject.toml [tool.ruff]`。
+
+### pre-commit（commit 前自动检查）
+
+`.pre-commit-config.yaml` 配置，含 trailing-whitespace / EOF / yaml/toml check / large-file guard / ruff lint+format。`scripts/setup.sh` 自动注册 hook。
+
+### pytest-mark / CI matrix
+
+CI 跑 `-m "not slow"` 跳过慢测试。matrix: ubuntu + macos, python 3.12。
+
+---
+
+## 维护规则
+
+- **新增卡片**：在对应章节末尾追加 `### <Title>` 子段，不开新文件
+- **删除卡片**：直接删段，更新引用
+- **跨段引用**：用 markdown 锚点 `[upcast](#数值升精度upcast-to-fp32)`
+- **完整精读论文**：留链接到 `docs/papers/...`（走 `paper-deep-read` skill），本文件只放项目视角摘要
+<|im_start|>user\n你是谁\n<|im_end|>\n<|im_start|>assistant\n' \
+  --max-new-tokens 300
+```
+
+观察到输出明显进入 chat/thinking 格式：
+
+```text
+user
+你是谁
+
+assistant
+<think>
+...
+</think>
+
+我是AI助手，专注于提供帮助和解答问题。...
+Human: 你是一个AI助手吗？
+...
+```
+
+这说明 chat template 对模型行为有非常强的引导作用：
+
+```text
+裸 prompt          -> 普通续写/重复
+chat template      -> assistant 角色 + thinking 格式 + 正常回答
+```
+
+同一个模型没有变，变化来自输入 token 序列的结构。
+
+#### 3. 为什么仍然会重复或出现多个 `</think>`
+
+chat template 让模型进入正确格式，但当前 T11 generate 仍然是最小实现：
+
+```text
+greedy argmax
+无 EOS stopping
+无 <|im_end|> stop
+固定生成 max_new_tokens
+无 repetition penalty
+```
+
+所以模型完成一次回答后不会自动停，会继续续写训练数据中常见的对话格式，例如：
+
+```text
+Human: ...
+Assistant: ...
+</think>
+```
+
+语言模型不是 XML/HTML 解析器，不会维护 `<think>` 标签栈；它只是在逐 token 预测下一个高概率 token。因此可能出现：
+
+```text
+一个 <think>
+多个 </think>
+```
+
+这通常不是权重加载或 forward 明显错误，而是生成控制还不完整。
+
+#### 4. 工程启发
+
+对 chat/instruct 模型，prompt 格式本身就是模型行为控制的一部分：
+
+```text
+模型能力 = 权重 + tokenizer + prompt/template + decoding 控制
+```
+
+不能只看模型 forward 是否正确，还要关注：
+
+```text
+chat template
+special tokens
+EOS / stop token
+只输出新增文本
+sampling 策略
+```
+
+T11 之后应优先补：
+
+```text
+1. tokenizer.apply_chat_template
+2. eos_token_id / <|im_end|> stopping
+3. only-new-text 输出
+4. 后续再做 top-p/temperature/repetition penalty
+```
+
+#### 5. 本项目当前结论
+
+T11 真实 Qwen3-0.6B smoke 已经证明最小链路打通：
+
+```text
+local model dir
+  -> tokenizer
+  -> load_causal_lm_from_hf
+  -> Qwen3ForCausalLM
+  -> EngineCore.step
+  -> GreedySampler
+  -> generate loop
+  -> decode text
+```
+
+裸 prompt 与 chat template 输出差异很大，是后续 CLI 默认启用官方 `apply_chat_template` 的重要依据。
+
+**本项目应用**：T11 CLI/e2e、后续 EOS stopping、chat template helper、T12 真实模型 smoke test。
 
 ### PyTorch state_dict 命名规则
 
