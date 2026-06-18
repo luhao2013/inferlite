@@ -8,8 +8,8 @@
 因此这里用 `Protocol` 定义一个结构化类型：只要某个对象支持
 `model(input_ids)` 并返回 logits Tensor，它就可以被 EngineCore 当作 LLMModel 使用。
 
-T12-pre（本任务卡）在原有基础上扩展了 `logits_to_keep` 参数，用来优化只计算最后几个 token 位置的 logits，
-例如 `model(input_ids, logits_to_keep=1)` 可以节省前 T-1 个位置的 lm_head 计算和内存。
+T12-pre（本任务卡）在原有基础上扩展了 `logits_to_keep` 参数，用来优化只计算最后几个 token 位置的
+logits，例如 `model(input_ids, logits_to_keep=1)` 可以节省前 T-1 个位置的 lm_head 计算和内存。
 
 注意：
 - `LLMModel` 不是模型实现，不会被实例化。

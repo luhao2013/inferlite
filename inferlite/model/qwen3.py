@@ -38,7 +38,8 @@ pre-norm 与 post-norm 对比：
    特点：
    - 原始 Transformer 使用 post-norm；
    - 浅层或 encoder 场景仍可见；
-   - 很深的 decoder-only LLM 中通常更难稳定训练，往往需要更谨慎的初始化、学习率 warmup 或其他稳定化技巧。
+   - 很深的 decoder-only LLM 中通常更难稳定训练，往往需要更谨慎的初始化、学习率 warmup 或
+      其他稳定化技巧。
 
 结论：最新主流 decoder-only 大模型以 pre-norm 为主；本项目为了对齐 Qwen3，也实现 pre-norm。
 """
@@ -159,7 +160,8 @@ class Qwen3Model(nn.Module):
 
         # token embedding：把离散 token id 映射成 residual stream 向量。
         # input_ids: [B, T] -> hidden_states: [B, T, H]
-        # 这里还没有 position embedding，因为 Qwen3 使用 RoPE；位置信息会在 attention 的 q/k 上注入。
+        # 这里还没有 position embedding，因为 Qwen3 使用 RoPE；
+        # 位置信息会在 attention 的 q/k 上注入。
         self.embed_tokens: nn.Embedding = nn.Embedding(
             config.vocab_size,
             config.hidden_size,
