@@ -272,6 +272,7 @@ class Qwen3ForCausalLM(nn.Module):
         self,
         input_ids: torch.Tensor,
         position_ids: torch.Tensor | None = None,
+        logits_to_keep: int | None = None,
     ) -> torch.Tensor:
         """执行 CausalLM 前向，返回每个位置的 vocab logits。
 
@@ -286,6 +287,8 @@ class Qwen3ForCausalLM(nn.Module):
         # Step 1: 先走 backbone，得到每个 token 的上下文表示。
         # 这里用关键字传 position_ids，避免未来 Qwen3Model.forward 参数顺序变化造成误传。
         hidden_states = self.model(input_ids, position_ids=position_ids)
+        if logits_to_keep is not None:
+            hidden_states = hidden_states[:, -logits_to_keep:, :]
 
         # Step 2: 对每个 token 位置独立做线性投影到词表维度。
         # lm_head 不混合 token 之间的信息；token 间信息已经在前面的 decoder layers 里完成。

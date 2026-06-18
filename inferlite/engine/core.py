@@ -47,7 +47,7 @@ class EngineCore:
         """
         # 当前 LLMModel 协议返回完整 logits [B, T, V]。
         # 单步生成只需要最后一个位置的 logits，因为它代表“基于当前完整上下文预测下一个 token”。
-        logits = self.model(input_ids)
+        logits = self.model(input_ids, logits_to_keep=1)
         next_token_logits = logits[:, -1, :]
 
         # sampler 只负责 [B, V] -> [B, 1]，不关心 logits 来自哪个模型或哪个位置。
