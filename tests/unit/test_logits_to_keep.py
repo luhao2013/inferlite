@@ -53,7 +53,7 @@ def test_engine_step_logits_to_keep_1():
 
 
 def test_engine_step_no_logits_to_keep_respects_default():
-    """不传 logits_to_keep 时，EngineCore.step 也能正常运行。"""
+    """不传 logits_to_keep 时，EngineCore.step 仍使用 logits_to_keep=1。"""
     logits = torch.tensor(
         [
             [
@@ -68,4 +68,6 @@ def test_engine_step_no_logits_to_keep_respects_default():
     next_token = engine.step(torch.tensor([[1, 2]]))
 
     assert torch.equal(next_token, torch.tensor([[2]]))
-    assert model.calls[-1][1] is None
+    # step 内部固定 logits_to_keep=1 优化
+    # calls 格式: (seq_len, logits_to_keep)
+    assert model.calls[-1][1] == 1

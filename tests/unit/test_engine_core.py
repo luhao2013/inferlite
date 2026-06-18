@@ -15,16 +15,27 @@ from inferlite.sampler import GreedySampler
 
 
 class FakeModel:
-    """满足 LLMModel Protocol 的 fake model，用固定 logits 测 EngineCore 流程。"""
+    """满足 LLMModel Protocol 的 fake model，用固定 logits 测 EngineCore 流程。
+
+    logits_to_keep 会被接受，但未做截断优化。
+    """
 
     def __init__(self, logits: torch.Tensor) -> None:
         self.logits = logits
         self.calls: list[torch.Tensor] = []
 
-    def __call__(self, input_ids: torch.Tensor) -> torch.Tensor:
+    def __call__(
+        self,
+        input_ids: torch.Tensor,
+        *,
+        logits_to_keep: int | None = None,
+    ) -> torch.Tensor:
         self.calls.append(input_ids)
         batch_size, seq_len = input_ids.shape
         assert self.logits.shape[:2] == (batch_size, seq_len)
+        # 模拟 Qwen3ForCausalLM.forward 的 logits_to_keep 截断行为
+        if logits_to_keep is not None:
+            return self.logits[:, -logits_to_keep:, :]
         return self.logits
 
 
