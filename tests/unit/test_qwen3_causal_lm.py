@@ -134,3 +134,62 @@ def test_qwen3_causal_lm_vs_transformers_logits_fp32():
 
     assert logits_mine.shape == logits_ref.shape
     assert torch.allclose(logits_mine, logits_ref, atol=1e-5, rtol=1e-5)
+
+
+def test_tie_word_embeddings_shares_weight_object():
+    """tie_word_embeddings=True 时，lm_head.weight 应与 embed_tokens.weight 是同一对象。"""
+    cfg = ModelConfig(
+        hidden_size=32,
+        num_hidden_layers=1,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        head_dim=8,
+        intermediate_size=64,
+        vocab_size=100,
+        max_position_embeddings=32,
+        rope_theta=1_000_000.0,
+        rms_norm_eps=1e-6,
+        tie_word_embeddings=True,
+    )
+    model = Qwen3ForCausalLM(cfg)
+
+    # `is` 检查：两者必须是同一个 Parameter 对象，而不仅仅是值相等。
+    assert (
+        model.lm_head.weight is model.model.embed_tokens.weight
+    ), "tie_word_embeddings=True 时，lm_head.weight 应与 embed_tokens.weight 共享同一对象"
+
+
+def test_tie_word_embeddings_false_has_independent_weights():
+    """tie_word_embeddings=False 时，lm_head.weight 与 embed_tokens.weight 应独立。"""
+    cfg = _tiny_model_config()  # tie_word_embeddings=False
+    model = Qwen3ForCausalLM(cfg)
+
+    assert (
+        model.lm_head.weight is not model.model.embed_tokens.weight
+    ), "tie_word_embeddings=False 时，lm_head.weight 与 embed_tokens.weight 应为独立对象"
+
+
+def test_tie_word_embeddings_update_propagates():
+    """tie 生效时，修改 embed_tokens.weight 应立即反映到 lm_head.weight。"""
+    cfg = ModelConfig(
+        hidden_size=32,
+        num_hidden_layers=1,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        head_dim=8,
+        intermediate_size=64,
+        vocab_size=100,
+        max_position_embeddings=32,
+        rope_theta=1_000_000.0,
+        rms_norm_eps=1e-6,
+        tie_word_embeddings=True,
+    )
+    model = Qwen3ForCausalLM(cfg)
+
+    # 修改 embed_tokens.weight 数据，lm_head.weight 应同步变化（同一 tensor）。
+    with torch.no_grad():
+        model.model.embed_tokens.weight.fill_(3.14)
+
+    assert torch.all(
+        model.lm_head.weight == 3.14
+    ), "tie 生效时修改 embed_tokens.weight 应同步到 lm_head.weight"

@@ -269,6 +269,22 @@ class Qwen3ForCausalLM(nn.Module):
             bias=False,
         )
 
+        # tie_word_embeddings：让 lm_head.weight 和 embed_tokens.weight 指向同一个 tensor。
+        #
+        # 语义：输入侧把 token id 映射成向量（embed），输出侧把向量映射回 token 分数（lm_head）。
+        # 当两者共享权重时，同一个词的"嵌入向量"和"解码方向"完全一致，参数量减少约 150M。
+        #
+        # 实现时直接把 lm_head.weight 的引用指向 embed_tokens.weight：
+        #   self.lm_head.weight is self.model.embed_tokens.weight  -> True
+        #
+        # 权重加载顺序：tie 在 __init__ 里完成，load_state_dict 之后也保持有效，
+        # 因为 lm_head.weight 只是一个指向 embed_tokens.weight 的引用——
+        # 加载到 embed_tokens.weight 的新数据会自动通过引用被 lm_head 看到。
+        #
+        # Qwen3-0.6B config.json 中 tie_word_embeddings=True；>0.6B 版本为 False。
+        if config.tie_word_embeddings:
+            self.lm_head.weight = self.model.embed_tokens.weight
+
     @override
     def forward(
         self,
