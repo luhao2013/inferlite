@@ -21,6 +21,7 @@ CLI 负责把用户输入的文本参数转换成一次完整推理调用：
 """
 
 import argparse
+from pathlib import Path
 
 import torch
 from transformers import AutoTokenizer
@@ -62,7 +63,12 @@ def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
 
     # tokenizer 负责 text <-> token ids。这里使用真实模型目录里的 tokenizer 配置。
-    tokenizer = AutoTokenizer.from_pretrained(args.model_dir, trust_remote_code=True)
+    # local_files_only=True：显式告诉 transformers 这是本地目录，跳过 HuggingFace Hub
+    # 的 repo-id 格式校验（新版 transformers 5.x 会对本地路径触发 hub 验证导致 OSError）。
+    model_dir = str(Path(args.model_dir).expanduser().resolve())
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_dir, trust_remote_code=True, local_files_only=True
+    )
 
     # --chat-template: 用 apply_chat_template 包装 prompt。
     # Qwen3 在 <|im_start|>user...<|im_end|><|im_start|>assistant 格式下训练，
@@ -78,7 +84,7 @@ def main(argv: list[str] | None = None) -> None:
         prompt_text = args.prompt
 
     # 模型加载只负责 config + safetensors -> Qwen3ForCausalLM。
-    model = load_causal_lm_from_hf(args.model_dir)
+    model = load_causal_lm_from_hf(model_dir)
     # eval() 把模型设置为推理模式，关掉 Dropout / BatchNorm 的训练行为。
     # 对当前 Qwen3 实现（无 Dropout）影响不大，但这是推理代码的标准做法，不能省。
     model.eval()

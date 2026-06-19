@@ -46,7 +46,9 @@ class FakeAutoTokenizer:
     trust_remote_code_seen: bool | None = None
 
     @classmethod
-    def from_pretrained(cls, model_dir: str, trust_remote_code: bool) -> FakeTokenizer:
+    def from_pretrained(
+        cls, model_dir: str, trust_remote_code: bool, local_files_only: bool = False
+    ) -> FakeTokenizer:
         cls.model_dir_seen = model_dir
         cls.trust_remote_code_seen = trust_remote_code
         return cls.tokenizer
@@ -135,12 +137,12 @@ def test_cli_main_wires_components_and_prints_text(monkeypatch, capsys):
 
     captured = capsys.readouterr()
     assert captured.out == "decoded text\n"
-    assert FakeAutoTokenizer.model_dir_seen == "fake-model"
+    assert FakeAutoTokenizer.model_dir_seen.endswith("fake-model")
     assert FakeAutoTokenizer.trust_remote_code_seen is True
     # 不加 --chat-template：prompt 应直接传入 tokenizer.encode
     assert FakeAutoTokenizer.tokenizer.prompt_seen == "你好"
     assert FakeAutoTokenizer.tokenizer.decoded_ids == [10, 20, 30]
-    assert calls["model_dir"] == "fake-model"
+    assert calls["model_dir"].endswith("fake-model")
     assert calls["max_new_tokens"] == 3
     assert torch.equal(calls["input_ids"], torch.tensor([[10, 20]]))
     # Fix 1: eval() 应被调用
