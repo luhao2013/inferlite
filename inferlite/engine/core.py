@@ -85,9 +85,10 @@ def generate(
     for _ in range(max_new_tokens):
         next_token = engine.step(input_ids)
         input_ids = torch.cat([input_ids, next_token], dim=1)
-        # EOS 停止：当前 batch 所有序列都生成了 EOS token 时退出。
-        # `(next_token == eos_token_id).all()` 保证 batch 里每条序列都已到达 EOS，
-        # 避免 batch 中个别序列先到 EOS 就截断其他序列。
+        # EOS 停止：当前 batch 所有序列在当前步生成了 EOS token 时退出。
+        # M1 简化：batch=1，只检查当前步是否为 EOS；没有记录每条序列是否曾经输出过 EOS。
+        # 多序列 batch 需要 done mask 记录每条序列状态，防止先到 EOS 的序列继续生成无效 token，留 M3。
+        # TODO(M3): 支持 done mask 实现真正的每序列 EOS 提前停止。
         if eos_token_id is not None and (next_token == eos_token_id).all():
             break
     return input_ids

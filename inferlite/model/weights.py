@@ -72,17 +72,27 @@ def map_hf_key_to_inferlite_key(hf_key: str, target: str) -> str | None:
        因为 `Qwen3ForCausalLM` 内部字段也叫 `self.model` 和 `self.lm_head`，
        它的 state_dict key 和 HF CausalLM checkpoint 基本天然一致，所以原样返回。
     """
+    # codeflicker-fix: LOGIC-Issue-001/dwv03qen2tgtzojek3hz
     if target == "backbone":
         if hf_key in _SKIPPED_HF_KEYS:
             return None
         if hf_key.startswith("model."):
             return hf_key.removeprefix("model.")
+        # backbone checkpoint 里不应该出现既不属于 _SKIPPED_HF_KEYS、
+        # 也不以 "model." 开头的 key（Qwen3 checkpoint 不存在这种 key）。
+        # 原来会 fall-through 到末尾 return hf_key，静默地把 HF key 原样返回；
+        # 现在改为明确报错，方便在加载其他 checkpoint 时快速定位问题。
+        msg = (
+            f"Unexpected HF key in backbone mode: {hf_key!r}. "
+            "Expected keys to start with 'model.' or be in _SKIPPED_HF_KEYS. "
+            "Check the checkpoint format or update _SKIPPED_HF_KEYS."
+        )
+        raise ValueError(msg)
     elif target == "causal_lm":
         return hf_key
     else:
         msg = f"Unknown weight loading target: {target!r}"
         raise ValueError(msg)
-    return hf_key
 
 
 def _model_safetensors_path(model_dir: str | Path) -> Path:

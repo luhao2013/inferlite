@@ -228,6 +228,11 @@ class GQAAttention(nn.Module):
         # causal mask 禁止当前位置看未来 token。
         # torch.triu(..., diagonal=1) 得到上三角 True：
         #   row i, col j 为 True 表示 j > i，也就是未来 token。
+        # M1 每步 forward 都重建这个 tensor，随 seq_len 增长开销增大。
+        # M2 引入 KV cache 后：
+        #   - prefill 阶段仍需完整 causal mask；
+        #   - decode 步单 token 管看到所有历史，不需要 causal mask，届时可以删採。
+        # TODO(M2): KV cache 后删採 decode 步的 causal mask 重建逻辑。
         causal_mask = torch.triu(
             torch.ones(seq_len, seq_len, dtype=torch.bool, device=hidden_states.device),
             diagonal=1,

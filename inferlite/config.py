@@ -57,8 +57,10 @@ class ModelConfig:
     rope_theta: float  # RoPE 基频 base； 1e6
     # Norm 参数
     rms_norm_eps: float  # 1e-6
-    # lm_head.weight 复用 embed_tokens.weight；
-    tie_word_embeddings: bool  # True (0.6B 特例)
+    # lm_head.weight 是否复用 embed_tokens.weight（权重共享）。
+    # 来自各模型 config.json：Qwen3-0.6B=True，Qwen3-1.7B 及以上版本=False。
+    # codeflicker-fix: LOGIC-Issue-002/dwv03qen2tgtzojek3hz
+    tie_word_embeddings: bool
 
     def __post_init__(self):
         # 关键合法性校验：只校验"算法层不能违反"的 invariant
@@ -112,5 +114,5 @@ class ModelConfig:
             max_position_embeddings=40960,
             rope_theta=1000000.0,
             rms_norm_eps=1e-6,
-            tie_word_embeddings=True,
+            tie_word_embeddings=True,  # Qwen3-0.6B config.json 明确为 True；>0.6B 版本为 False
         )

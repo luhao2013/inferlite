@@ -27,7 +27,7 @@ uv run python scripts/preflight.py
 
 ## 5. CI 最近一次状态
 ```bash
-gh run list --limit 1 --workflow tests.yml 2>/dev/null || echo "gh CLI 未安装，去 https://github.com/luhao2013/inferlite/actions 看"
+gh run list --limit 1 --workflow tests.yml 2>/dev/null || echo "gh CLI 未安装，去 https://github.com/luhao-lab/inferlite/actions 看"
 ```
 
 ## 6. git 状态
