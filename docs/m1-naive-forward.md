@@ -12,7 +12,7 @@
 
 | | |
 |---|---|
-| **项目地址** | [inferlite](https://github.com/luhao-lab/inferlite) · Tag `m1/naive-forward` |
+| **项目地址** | [inferlite](https://github.com/luhao-lab/inferlite/tree/m1%2Fnaive-forward) · Tag `m1/naive-forward` |
 | **模型** | [Qwen/Qwen3-0.6B](https://huggingface.co/Qwen/Qwen3-0.6B)（HuggingFace） |
 | **代码规模** | ~800 行核心实现 + 90 个单元测试，mypy / ruff 全通过 |
 
