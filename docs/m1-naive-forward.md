@@ -24,8 +24,11 @@ cd inferlite && uv sync
 uv run pytest tests/unit/ -q
 
 # 用真实 Qwen3-0.6B 生成
+# 模型下载：ModelScope（国内推荐）https://modelscope.cn/models/Qwen/Qwen3-0.6B
+#           HuggingFace https://huggingface.co/Qwen/Qwen3-0.6B
+# ModelScope 默认缓存位置：~/.cache/modelscope/hub/Qwen/Qwen3-0.6B
 uv run inferlite-generate \
-  --model-dir ~/huggingface/Qwen3-0.6B \
+  --model-dir /path/to/Qwen3-0.6B \
   --prompt "请解释 Transformer 中 Attention 的作用" \
   --max-new-tokens 100 \
   --chat-template
@@ -87,23 +90,16 @@ LLM 推理的逻辑可以拆成五个关键问题：
 
 以 vLLM（当前工业界最主流的开源 LLM 推理引擎）为参照：
 
-```
-用户 / HTTP 请求
-    |
-    v
-[Entrypoint]  LLM class / OpenAI-compatible API Server
-    |
-    v
-[LLMEngine]   Input Processing · Scheduler · Output Processing
-    |
-    v
-[Worker]      一个 GPU → 一个 Worker 进程
-    |
-    v
-[ModelRunner] 准备输入 tensor，管理 KV cache，调用 forward
-    |
-    v
-[Model]       torch.nn.Module：真正的神经网络计算
+```mermaid
+flowchart TD
+    User["用户 / HTTP 请求"]
+    EP["Entrypoint<br/>LLM class / OpenAI-compatible API Server"]
+    ENG["LLMEngine<br/>Input Processing · Scheduler · Output Processing"]
+    W["Worker<br/>一个 GPU → 一个 Worker 进程"]
+    MR["ModelRunner<br/>准备输入 tensor，管理 KV cache，调用 forward"]
+    M["Model<br/>torch.nn.Module：真正的神经网络计算"]
+
+    User --> EP --> ENG --> W --> MR --> M
 ```
 
 这五层中，**越靠上越关注调度和并发，越靠下越关注数值计算**。vLLM 的调度器（Scheduler）负责 PagedAttention 的 KV Cache 内存管理；ModelRunner 负责把 token ids 组装成 batch tensor 并调用 forward；Model 层只是一个 `nn.Module`，不知道自己在被谁调用。
@@ -175,16 +171,29 @@ inferlite/              # 主包（Python package）
 
 ### 2.2 依赖方向
 
-```
-cli.py
-  └─> engine/core.py    (调度层：不知道模型结构)
-        └─> engine/protocol.py  (LLMModel Protocol)
-        └─> sampler/greedy.py   (采样层：只看 logits [B,V])
-  └─> model/weights.py  (加载层：不知道引擎)
-        └─> model/qwen3.py
-              └─> model/attention.py
-              └─> model/layers.py
-  └─> config.py         (被所有层引用，但自身不依赖任何层)
+```mermaid
+flowchart TD
+    CLI["cli.py<br/>命令行入口"]
+    ENG["engine/core.py<br/>调度层：不知道模型结构"]
+    PROTO["engine/protocol.py<br/>LLMModel Protocol"]
+    SAMP["sampler/greedy.py<br/>采样层：logits→next_token"]
+    WGT["model/weights.py<br/>加载层：不知道引擎"]
+    Q3["model/qwen3.py<br/>Qwen3ForCausalLM"]
+    ATT["model/attention.py<br/>GQAAttention"]
+    LAY["model/layers.py<br/>RMSNorm · SwiGLU · RoPE"]
+    CFG["config.py<br/>超参唯一事实源（无依赖）"]
+
+    CLI --> ENG
+    CLI --> WGT
+    ENG --> PROTO
+    ENG --> SAMP
+    WGT --> Q3
+    Q3 --> ATT
+    Q3 --> LAY
+    ENG --> CFG
+    WGT --> CFG
+    Q3 --> CFG
+    ATT --> CFG
 ```
 
 关键设计原则：**engine 层只依赖 Protocol，不依赖具体模型类**。`EngineCore` 接受任何满足 `LLMModel` Protocol（即 `(input_ids) -> logits`）的对象，便于后续替换模型实现（如加 KV Cache 版本）而不改动引擎逻辑。`config.py` 处于依赖树底端，被所有层读取，但自身不导入任何项目模块。
@@ -198,7 +207,10 @@ cli.py
 ### 入口：从命令行到 `main()`
 
 ```bash
-uv run inferlite-generate --model-dir ~/huggingface/Qwen3-0.6B --prompt "你好" --chat-template
+# 也可以在命令行中直接传入模型目录
+uv run inferlite-generate \
+  --model-dir ~/.cache/modelscope/hub/Qwen/Qwen3-0.6B \
+  --prompt "你好" --chat-template
 ```
 
 `pyproject.toml` 的 `[project.scripts]` 把这条命令映射到：
@@ -461,6 +473,111 @@ logits = self.lm_head(hidden_states)                        # [B, 1, V]
 
 ---
 
+## 归一化层：RMSNorm
+
+> **本章要回答的问题**：为什么现代 LLM 用 RMSNorm 而不是 LayerNorm？fp16/bf16 推理时为什么必须升到 fp32 计算方差？
+
+### 5a.1 LayerNorm 到 RMSNorm 的演变
+
+原始 Transformer 用 **LayerNorm**：
+
+```
+LayerNorm(x) = (x - μ) / √(σ² + ε) × γ + β
+```
+
+其中 μ 是均值，σ² 是方差，γ/β 是可学习参数（scale 和 bias）。需要两个 reduce 操作（算均值、算方差），两组参数。
+
+**RMSNorm**（Zhang & Sennrich, 2019）的洞察：均值中心化（减去 μ）和偏置（β）对于深层 Transformer 作用有限，移除后精度几乎不变，但计算量减少约一半：
+
+```
+RMSNorm(x) = x / √(mean(x²) + ε) × γ
+```
+
+只有一个统计量（均方根 RMS），只有一组参数（γ），`mean(x²) = E[x²]` 等价于 RMS(x)²。
+
+Qwen3 / LLaMA / Mistral 等现代开源 LLM 均采用 RMSNorm。Qwen3 的 eps 值为 1e-6（注意：LLaMA / Qwen2 用 1e-5，不能照抄）。
+
+### 5a.2 为什么归一化阶段必须升 fp32
+
+推理时 tensor 通常是 fp16 或 bf16，但 RMSNorm 的 reduce 阶段必须升 fp32 计算，原因：
+
+| dtype | 数值范围 | 尾数精度 | 风险 |
+|-------|---------|---------|------|
+| fp16 | ±65504 | 10 bit | hidden_size=1024 时 mean(x²) 容易**溢出** |
+| bf16 | ±3.4e38 | 7 bit | 范围够但**精度不足**，平方后误差放大 |
+| fp32 | ±3.4e38 | 23 bit | 安全，业界共识 |
+
+```python
+# inferlite/model/layers.py L54-L77
+def forward(self, x: torch.Tensor) -> torch.Tensor:
+    input_dtype = x.dtype          # 记住原 dtype（fp16/bf16）
+    x = x.to(torch.float32)        # 升 fp32
+    var = x.pow(2).mean(dim=-1, keepdim=True)   # E[x²]
+    x = x * torch.rsqrt(var + self.eps)         # x / RMS(x)
+    return (self.weight * x).to(input_dtype)    # scale 后降回原 dtype
+```
+
+`rsqrt`（倒数平方根）比 `1 / sqrt(...)` 更快，且数值更稳定。`eps` 必须加在 `rsqrt` 的参数里（`rsqrt(var + eps)`），而非加在结果上（`rsqrt(var) + eps`），两者数值行为不同。
+
+> 代码定位：[layers.py L20–L77](https://github.com/luhao-lab/inferlite/blob/m1%2Fnaive-forward/inferlite/model/layers.py#L20-L77)
+
+---
+
+## 前馈网络：SwiGLU MLP
+
+> **本章要回答的问题**：Qwen3 的 MLP 为什么不用 FFN + ReLU？SwiGLU 如何用"门控"机制增强表达能力？
+
+### 5b.1 从 FFN 到 Gated Linear Unit
+
+原始 Transformer 的 FFN：
+
+```
+FFN(x) = Linear₂(ReLU(Linear₁(x)))
+```
+
+一条路，ReLU 激活。
+
+**Gated Linear Unit（GLU）** 的思想：同时计算两条投影，用一条控制另一条的"通过量"：
+
+```
+GLU(x) = σ(W₁x) ⊙ (W₂x)      # ⊙ 表示逐元素乘
+```
+
+**SwiGLU**（Shazeer, 2020）：把 sigmoid 替换成 SiLU（Swish-1）：
+
+```
+SwiGLU(x) = SiLU(gate_proj(x)) ⊙ up_proj(x)
+```
+
+其中 `SiLU(z) = z × σ(z)`，是平滑版的 ReLU，负值不完全截零，允许一定程度的梯度流动。
+
+### 5b.2 Qwen3 的 SwiGLU 实现
+
+```
+x ── gate_proj ── SiLU ─┐
+                        ├─ element-wise × ── down_proj ── y
+x ── up_proj   ─────────┘
+```
+
+完整公式：`y = down_proj(SiLU(gate_proj(x)) × up_proj(x))`
+
+```python
+# inferlite/model/layers.py L100-L126
+def forward(self, x: torch.Tensor) -> torch.Tensor:
+    gate = self.gate_proj(x)     # [B, T, intermediate_size]
+    up = self.up_proj(x)         # [B, T, intermediate_size]
+    hidden = F.silu(gate) * up   # 只对 gate 路做 SiLU，不对 up 路
+    return self.down_proj(hidden) # [B, T, hidden_size]
+```
+
+**常见错误**：写成 `silu(gate * up)` 而非 `silu(gate) * up`，这会改变 SwiGLU 的定义并破坏与 transformers 的数值对齐。
+
+Qwen3-0.6B 参数：`intermediate_size=3072`（约是 `hidden_size=1024` 的 3 倍），三条 Linear 均无 bias（`bias=False`）。
+
+> 代码定位：[layers.py L80–L126](https://github.com/luhao-lab/inferlite/blob/m1%2Fnaive-forward/inferlite/model/layers.py#L80-L126)
+
+---
+
 ## GQA Attention：从 MHA 到分组查询注意力
 
 > **本章要回答的问题**：Qwen3 为什么不用标准 MHA？GQA 在计算层面如何实现？QK-Norm 和 RoPE 各起什么作用，为什么顺序不能反？
@@ -505,27 +622,63 @@ def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
 
 > 代码定位：[attention.py L44–L88](https://github.com/luhao-lab/inferlite/blob/m1%2Fnaive-forward/inferlite/model/attention.py#L44-L88)
 
-### 5.3 QK-Norm 与 RoPE 的顺序依赖
+### 5.3 RoPE：为什么旋转可以编码相对位置
+
+**直觉理解**：RoPE 的核心数学事实是，旋转角度之差等于相对位置。
+
+设位置 m 的 query 向量 q，位置 n 的 key 向量 k。RoPE 分别将它们旋转 mθ 和 nθ 角度：
+
+```
+q_m = R(mθ) · q
+k_n = R(nθ) · k
+```
+
+则点积（attention score）为：
+
+```
+q_m · k_n = [R(mθ) · q]ᵀ · [R(nθ) · k]
+           = qᵀ · R(mθ)ᵀ · R(nθ) · k
+           = qᵀ · R((n-m)θ) · k    # 旋转矩阵满足 Rᵀ(α)·R(β) = R(β-α)
+```
+
+**结论：点积结果只依赖相对位置 (n-m)，与绝对位置无关。**
+
+这正是 LLM 所需要的：模型理解"前一个词"（相对 -1），而非"第 5 个 token"（绝对 5）。推理时序列超出训练长度，相对位置信息仍然有效（但超长序列需要额外的 RoPE 缩放如 YaRN，M2+ 再考虑）。
+
+**高维扩展**：head_dim=128，实际是 64 组二维旋转平面：
+
+```
+head = [d₀, d₁, ..., d₆₃ | d₆₄, d₆₅, ..., d₁₂₇]
+        └──── 前半 ────────┘└──── 后半 ────────────┘
+
+rotate_half: (前半, 后半) → (-后半, 前半)
+每组平面 (dᵢ, dᵢ₊₆₄) 对应角速度 θᵢ = 1/rope_theta^(2i/head_dim)
+θᵢ 随 i 递减：低维旋转快（高频，捕捉短距离），高维旋转慢（低频，捕捉长距离）
+```
+
+```python
+# inferlite/model/layers.py L232-L260
+with torch.autocast(device_type=x.device.type, enabled=False):
+    freqs = (inv_freq @ position_ids).transpose(1, 2)  # [B, T, D/2]
+    emb = torch.cat((freqs, freqs), dim=-1)            # [B, T, D]，前半=后半
+    cos = emb.cos()
+    sin = emb.sin()
+# cos/sin 形状 [B, T, D]，apply_rotary_pos_emb 将其广播到 [B, 1, T, D]
+```
+
+**inferlite vs nano-vllm**：inferlite 每步现算 cos/sin（便于调试对齐），nano-vllm 预缓存全长度表只索引（推理更快）。M2 可以改为预缓存方案。
+
+> 代码定位：[layers.py L129–L261](https://github.com/luhao-lab/inferlite/blob/m1%2Fnaive-forward/inferlite/model/layers.py#L129-L261)
+
+### 5.4 QK-Norm 与 RoPE 的顺序约束
 
 Qwen3 相比 LLaMA 2 增加了 **QK-Norm**：在每个 head 的 Q/K 向量上做 RMSNorm，作用是稳定 attention score 的数值范围，防止 q·k 点积在深层模型中数值爆炸。
 
 关键顺序约束：**必须先 QK-Norm，再 RoPE**。
 
-原因：RoPE 通过旋转矩阵将位置信息编码进 Q/K 向量。若先做 RoPE 再做 RMSNorm，归一化会消除向量的模长信息，而模长在旋转后已经编码了位置差异——这会破坏 RoPE 的位置编码。
+原因：RoPE 通过旋转矩阵将位置信息编码进 Q/K 向量的**方向**上。若先做 RoPE 再做 RMSNorm，归一化会把 Q/K 的模长重新归一化为 1，破坏旋转后 q_m · k_n = f(m-n) 的数学性质，导致 RoPE 失效。
 
-```python
-# QK-Norm 在 RoPE 之前
-q = q.view(B, T, n_q, D).transpose(1, 2)      # [B, n_q, T, D]
-k = k.view(B, T, n_kv, D).transpose(1, 2)     # [B, n_kv, T, D]
-
-q = self.q_norm(q)                             # RMSNorm on head_dim
-k = self.k_norm(k)
-
-cos, sin = self.rotary_emb(position_ids)
-q, k = apply_rotary_pos_emb(q, k, cos, sin)   # RoPE 注入位置信息
-```
-
-### 5.4 Causal Mask 与 Scaled Dot-Product Attention
+### 5.5 Causal Mask 与 Scaled Dot-Product Attention
 
 ```python
 # attention score 计算
@@ -533,11 +686,17 @@ attn_scores = torch.matmul(q, k.transpose(-2, -1)) * self.scaling
 # scaling = head_dim ** -0.5 = 128 ** -0.5 ≈ 0.0884
 # 防止 q·k 点积随 head_dim 增大而方差爆炸，导致 softmax 梯度消失
 
-# causal mask：token i 不能看到 j > i 的位置
-# mask 值为 0（保留）或 -inf（屏蔽），加到 attn_scores 上
-attn_scores = attn_scores + causal_mask
+# causal mask：上三角（不含对角线）置为 True，表示「未来 token」
+causal_mask = torch.triu(
+    torch.ones(seq_len, seq_len, dtype=torch.bool, device=q.device),
+    diagonal=1,
+)[None, None, :, :]  # → [1, 1, T, T]，广播到 [B, n_q, T, T]
 
-attn_weights = F.softmax(attn_scores, dim=-1, dtype=torch.float32).to(q.dtype)
+# masked_fill：被 mask 的位置填成 dtype 能表示的最小值（约 -65504 for fp16）
+# 经 softmax 后这些位置的概率趋于 0，等价于「看不到」未来 token
+attn_scores = attn_scores.masked_fill(causal_mask, torch.finfo(attn_scores.dtype).min)
+
+attn_weights = torch.softmax(attn_scores, dim=-1, dtype=torch.float32).to(q.dtype)
 # softmax 在 float32 下计算（数值稳定性），再 cast 回 q 的 dtype
 
 output = torch.matmul(attn_weights, v)  # [B, n_q, T, D]
@@ -545,7 +704,7 @@ output = output.transpose(1, 2).reshape(B, T, n_q * D)
 output = self.o_proj(output)            # [B, T, H]
 ```
 
-Causal mask 的构造：上三角矩阵（不含对角线）置为 `-inf`，使 softmax 后对应权重趋于 0。这保证了自回归生成的因果性——位置 t 的 attention 只能依赖 t 及之前的 token。
+Causal mask 的构造：先用 `torch.triu` 得到上三角 bool 矩阵（`True` 表示未来 token），再用 `masked_fill` 将这些位置填成 `dtype.min`（约 −65504 for fp16），softmax 后趋于 0。这保证了自回归生成的因果性——位置 t 的 attention 只能依赖 t 及之前的 token。
 
 ---
 
@@ -854,9 +1013,11 @@ dependencies = [
     "torch>=2.4,<3",
     "transformers>=5.10,<6",
     "safetensors>=0.4,<1",
-    "fastapi>=0.110,<1",    # server/ 预留
-    "uvicorn>=0.30,<1",     # server/ 预留
 ]
+
+# server/ 实现时再启用，目前尚未实现 HTTP API
+[project.optional-dependencies]
+server = ["fastapi>=0.110,<1", "uvicorn>=0.30,<1"]
 
 [project.scripts]
 inferlite-generate = "inferlite.cli:main"   # ← 这行把函数变成命令行工具
@@ -941,3 +1102,24 @@ ignore = ["E501"]  # 行长度由 fmt 控制
 | 采样 | 仅 greedy | Temperature / top-k / top-p |
 
 KV Cache 是推理效率的核心。自回归推理每步计算中，已生成 token 的 Key/Value 向量实际上不会改变（因为 causal mask 保证它们的 attention 不受新 token 影响）。将这些 K/V 向量缓存起来，下一步只计算新 token 的 Q，并与缓存中的 K/V 做 attention，将每步计算量从 O(T²) 降至 O(T)，生成 N 个 token 的总复杂度从 O(N·T²) 降至 O(N·T)。
+
+**GQA 与 KV Cache 的直接联系**：KV Cache 的内存开销公式为：
+
+```
+KV Cache = 2 × num_layers × seq_len × num_kv_heads × head_dim × dtype_bytes
+```
+
+Qwen3-0.6B（28 层，8 KV heads，head_dim=128，bf16=2B）生成 1024 tokens：
+
+```
+2 × 28 × 1024 × 8 × 128 × 2 = 117 MB
+```
+
+若用 MHA（16 KV heads），同等条件下是 234 MB，GQA 直接减半。这也是 M2 在同样显存下能支持更长序列或更大 batch 的原因之一。
+
+**M2 实现 KV Cache 的关键改动**：
+
+1. `GQAAttention` 需要接受并更新 `past_key_value`（缓存 K/V 张量）
+2. `generate` loop 中 decode 步只传当前 token 的 `input_ids`，而非完整历史
+3. `causal mask` 在 decode 步不再需要（单 token 能看到所有历史，无未来 token）—— P2-005 中已标注的 TODO(M2)
+4. `RotaryEmbedding` 的 `position_ids` 需要正确传入当前步的绝对位置，而非从 0 开始
