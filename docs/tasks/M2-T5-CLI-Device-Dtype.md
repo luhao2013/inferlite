@@ -9,7 +9,33 @@
 
 ## 目标
 
-修改 `cli.py`，新增 `--device`、`--dtype`、`--max-seq-len` 三个参数，让 inferlite 能在 MPS（Apple Silicon）和 CUDA 上以 bf16 运行 Qwen3-0.6B，并支持用户自定义 KV Cache 大小。
+**要解决什么问题**：
+T4 的 generate loop 里 device/dtype 都硬编码为 `cpu` / `float32`，用户无法用 MPS（Apple Silicon）或 CUDA 加速，也无法控制 KV Cache 大小。
+本卡让 CLI 支持 `--device`、`--dtype`、`--max-seq-len` 三个参数，让推理可以在 MPS 上以 bf16 跑，吞吐更高、显存占用更低。
+
+**做完是什么效果**：
+```bash
+# Mac M 系列芯片自动用 MPS + bf16
+uv run python -m inferlite.cli --model /path/to/qwen3 --prompt "你好" --device auto --dtype auto
+
+# 显式控制
+uv run python -m inferlite.cli --model /path/to/qwen3 --prompt "你好" \
+  --device mps --dtype bf16 --max-seq-len 2048
+```
+
+**不做什么**（边界）：
+只改 CLI 入口（`cli.py`）和辅助函数 `resolve_device_dtype`，不改模型和 generate loop 内部。
+性能测试 / benchmark 不在本卡。
+
+**在推理链路中的位置**：
+```
+用户命令行
+    └── cli.py --device auto --dtype auto --max-seq-len 1024   ← 本卡
+          ├── resolve_device_dtype() → device="mps", dtype=bf16
+          ├── model.to(device, dtype)
+          ├── KVCache.from_config(..., dtype=bf16, device="mps")
+          └── generate()                                        ← T4 已完成
+```
 
 ## 产出文件
 - `inferlite/cli.py`（修改）

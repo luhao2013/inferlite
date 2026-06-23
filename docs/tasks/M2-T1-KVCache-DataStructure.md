@@ -9,7 +9,37 @@
 
 ## 目标
 
-新建 `model/kv_cache.py`，定义静态预分配的 KV Cache 数据结构：`LayerKVCache`（单层缓存）和 `KVCache`（全模型容器），供后续 Attention / generate loop 使用。
+**要解决什么问题**：
+M1 的 generate loop 每步都对所有历史 token 重算 K/V，复杂度 O(T²)。
+本卡定义"放 KV 的盒子"——KV Cache 数据结构，为后续 T2（Attention 读写）和 T4（generate loop 拆分）打好地基。
+
+**做完是什么效果**：
+```python
+cache = KVCache.from_config(ModelConfig.qwen3_0_6b(), batch_size=1,
+                             max_seq_len=1024, dtype=torch.float32, device="cpu")
+# 成功创建：28 层 × 2（K+V）个 [1, 8, 1024, 128] tensor，全部预分配到 cpu
+assert len(cache.layers) == 28
+assert cache.layers[0].k.shape == (1, 8, 1024, 128)
+assert cache.cur_len == 0
+```
+
+**不做什么**（边界）：
+本卡只是数据结构（造盒子），不写读写逻辑。
+读写（切片写入 K/V、切片读取有效历史）在 T2（Attention）实现；
+cur_len 的推进在 T4（generate loop）实现。
+
+**在推理链路中的位置**：
+```
+generate()                        ← T4 负责
+    ├── KVCache.from_config()     ← 本卡：一次性预分配所有层的 K/V tensor
+    │
+    ├── Prefill: model.forward(input_ids, kv_cache=cache)
+    │       └── 每层 Attention 拿到 cache.layers[i]（T2 负责读写）
+    │
+    └── Decode loop（每步）
+            └── 每层 Attention 读 cache.layers[i]（T2 负责）
+                cur_len += 1     ← T4 负责推进
+```
 
 ## 产出文件
 - `inferlite/model/kv_cache.py` — `LayerKVCache` + `KVCache`

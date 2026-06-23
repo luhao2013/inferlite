@@ -9,7 +9,35 @@
 
 ## 目标
 
-修改 `engine/core.py` 的 `generate()` 函数，拆分为 prefill + decode loop 两阶段；同步更新 `engine/protocol.py` 的 `LLMModel` 接口签名。核心验收：有 KV Cache 的输出与无 KV Cache 的输出 `torch.equal`。
+**要解决什么问题**：
+T1-T3 把数据结构和读写接口都备好了，但 `generate()` 还是 M1 版本：每步把所有 token 重新跑一遍 full forward，没有用到 KV Cache。
+本卡把 generate loop 拆成 Prefill（一次性处理整个 prompt）+ Decode（每步只跑一个新 token）两阶段，让 KV Cache 真正发挥作用。
+
+**做完是什么效果**：
+```python
+# 有 cache 和无 cache 的输出完全一致（torch.equal），但有 cache 时 Decode 步更快
+out_no_cache = generate(engine, input_ids, max_new_tokens=10)
+out_with_cache = generate(engine, input_ids, max_new_tokens=10, kv_cache=cache)
+assert torch.equal(out_no_cache, out_with_cache)  # 语义等价
+```
+
+**不做什么**（边界）：
+只改 generate loop 和 protocol 接口，不改模型内部（T2/T3 已完成）。
+性能 benchmark 不在本卡（只要正确性通过即可）。
+
+**在推理链路中的位置**：
+```
+CLI / 用户调用
+    └── generate(engine, input_ids, kv_cache=cache)  ← 本卡
+          │
+          ├── [Prefill]  engine.model(full_prompt, position_ids, kv_cache)
+          │              cache.cur_len = T_prompt    ← 本卡：显式推进 cur_len
+          │
+          └── [Decode loop]
+                engine.model(last_token, position_ids=[[cur_len]], kv_cache)
+                cache.cur_len += 1                   ← 本卡：每步推进
+                sampler → next_token → 拼到 output
+```
 
 ## 产出文件
 - `inferlite/engine/protocol.py`（修改）— 新增 `position_ids`、`kv_cache` 可选参数

@@ -9,7 +9,33 @@
 
 ## 目标
 
-修改 `model/attention.py` 的 `GQAAttention.forward`，支持 prefill/decode 两阶段：新增 `position_embeddings`、`layer_kv_cache`、`cache_position` 三个参数，实现 cache 读写逻辑，并将 causal mask 改为 `T > 1` 判断。
+**要解决什么问题**：
+T1 造好了盒子，但 M1 的 `GQAAttention.forward` 不知道这个盒子的存在，每次调用都只用当前输入的 K/V。
+本卡让 Attention 学会"往盒子里写，从盒子里读"，这是 KV Cache 真正发挥作用的关键一步。
+
+**做完是什么效果**：
+Prefill（T=5）后再做一步 Decode（T=1），Decode 的 Attention 输出和"把 6 个 token 全量输入做 full attention"的结果数值一致（fp32 误差 < 1e-5）：
+```python
+# prefill 5 个 token
+out_prefill = attn(x[:, :5, :], ..., layer_kv_cache=cache.layers[0], cache_position=0)
+cache.cur_len = 5
+# decode 1 个 token，结果应与 full attention 中第 6 步一致
+out_decode = attn(x[:, 5:6, :], ..., layer_kv_cache=cache.layers[0], cache_position=5)
+```
+
+**不做什么**（边界）：
+只改 `attention.py`，不动 `qwen3.py` / `layers.py`（T3 负责在 Model 层透传参数）。
+不负责 cur_len 的推进（T4 负责）。
+
+**在推理链路中的位置**：
+```
+generate()
+    └── model.forward(kv_cache=cache)             ← T3 透传参数
+          └── 每层 DecoderLayer → GQAAttention    ← 本卡
+                ├── Prefill: 写入 cache.layers[i].k/v[:, :, 0:T_p, :]
+                ├── Decode:  写入 cache.layers[i].k/v[:, :, cur_len:cur_len+1, :]
+                └── 读取:    k/v[:, :, :cur_len+T, :]（完整有效历史）
+```
 
 ## 产出文件
 - `inferlite/model/attention.py`（修改）— 新接口 + cache 读写 + causal mask 改动

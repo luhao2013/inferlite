@@ -9,7 +9,32 @@
 
 ## 目标
 
-修改 `model/qwen3.py` 和 `model/layers.py`：在 `Qwen3Model.forward` 统一计算 `position_embeddings`（cos/sin），并将 `kv_cache` 参数透传到每层 Attention。M1 的 95 个单测必须全部继续通过。
+**要解决什么问题**：
+T2 改好了 `GQAAttention`，但 `Qwen3Model.forward` 和 `DecoderLayer.forward` 的签名还是 M1 版本，没有 `kv_cache` 参数，新参数传不进去。
+本卡做"管道改造"——让参数能从最外层的 `generate()` 一路透传到最里层的 Attention。
+
+**做完是什么效果**：
+```python
+# kv_cache=None 时：行为与 M1 完全一致，95 个单测全绿（零回归）
+model.forward(input_ids, position_ids=pos)
+
+# kv_cache 传入时：K/V 被写入 cache，generate loop 可以用
+model.forward(input_ids, position_ids=pos, kv_cache=cache)
+```
+
+**不做什么**（边界）：
+只做参数透传和 `position_embeddings` 统一计算，不改 Attention 内部逻辑（T2 已完成）。
+不改 generate loop（T4 负责）。
+
+**在推理链路中的位置**：
+```
+generate()                                ← T4
+    └── model.forward(kv_cache=cache)     ← 本卡：接收并透传 kv_cache
+          ├── position_embeddings = rotary_emb(...)   ← 本卡：统一算一次（M1 是各层各算）
+          └── for i, layer in enumerate(self.layers):
+                layer.forward(... layer_kv_cache=cache.layers[i] ...)  ← 本卡：透传
+                    └── GQAAttention.forward(... layer_kv_cache=... )  ← T2 已完成
+```
 
 ## 产出文件
 - `inferlite/model/qwen3.py`（修改）
