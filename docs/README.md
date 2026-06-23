@@ -17,7 +17,7 @@ make test         # 跑全部单测，应全绿
 完成后用 `uv run ...` 而非裸 `python`（自动注入 venv，无需 activate）。
 
 ```bash
-uv run python -m inferlite.cli "你好"     # 跑推理
+uv run python -m inferlite.cli "你好"      # 跑推理
 uv run pytest tests/unit/test_rmsnorm.py -v
 make lint && make fmt && make typecheck
 ```
@@ -27,32 +27,32 @@ make lint && make fmt && make typecheck
 
 ---
 
-## 文档目录
+## 文档地图
 
-```
-docs/
-├── README.md          ← 本文件：快速上手 + 目录导航
-│
-├── plan/              ← 「规划层」记录做什么、为什么、进度到哪了
-│   ├── PLAN.md            14 个里程碑路线图（项目全貌）
-│   ├── PROGRESS.md        每个 M 的进度状态 + 变更日志
-│   ├── M1.md              M1 作战地图（架构图、任务总表、测试金字塔）
-│   └── m2-kv-cache-design.md   M2 技术设计文档（方案调研、ADR、数据流）
-│
-├── tasks/             ← 「执行层」每张卡是一次 PR 粒度的作战单元
-│   ├── _TEMPLATE.md       7 字段任务卡模板（/work 命令自动填充）
-│   ├── M2-T1~T5.md        当前活跃任务卡（M2 KV Cache 阶段）
-│   └── M1-archive/        M1 已完成任务卡（历史档案）
-│
-├── kb/                ← 「知识层」沉淀可复用的知识，防止经验流失
-│   ├── knowledge.md       知识卡片：Papers / Libraries / Concepts / Tools / ADR / 参考资料
-│   ├── lessons.md         踩坑教训（L1~L4，叙事性，按时间追加）
-│   └── blueprints.md      模块契约（每个模块的接口、踩坑、跨 M 依赖）
-│
-└── _assets/           ← MkDocs 网站 UI 资产（非文档内容）
-    ├── javascripts/
-    └── stylesheets/
-```
+### plan/ — 规划层（想了解项目方向/进度时读这里）
+
+| 文件 | 内容 | 什么时候读 |
+|------|------|-----------|
+| [plan/PLAN.md](./plan/PLAN.md) | 14 个里程碑路线图，每个 M 的目标范围、不做什么、参照项目 | 想了解整个项目要做什么、为什么这么规划 |
+| [plan/PROGRESS.md](./plan/PROGRESS.md) | 每个 M 的状态（⬜/🟡/✅）+ 每次任务完成的变更日志 | 每次开工先看：当前做到哪了，下一步是什么 |
+| [plan/M1.md](./plan/M1.md) | M1 作战地图：架构图、任务总表（T0~T12）、测试金字塔、完成定义 | M1 推进期开工前读；M1 完成后作为历史参考 |
+| [plan/m2-kv-cache-design.md](./plan/m2-kv-cache-design.md) | M2 技术设计：KV Cache 方案调研、ADR 决策、数据流、代码骨架 | M2 推进期开工前读；想理解 KV Cache 设计思路时 |
+
+### tasks/ — 执行层（想看具体怎么做/做到哪了时读这里）
+
+| 文件 | 内容 | 什么时候读 |
+|------|------|-----------|
+| [tasks/M2-T1~T5](./tasks/) | 当前 M2 的 5 张活跃任务卡，每卡含：算法核心、L0 测试清单、DoD、易踩坑 | 开始写某个模块前读对应任务卡 |
+| [tasks/_TEMPLATE.md](./tasks/_TEMPLATE.md) | 任务卡 7 字段模板（`/work` 命令自动填充） | 新建任务卡时参考格式 |
+| [tasks/M1-archive/](./tasks/M1-archive/) | M1 全部 12 张已完成任务卡（T0~T12） | 想回顾 M1 某个模块的实现思路、踩坑记录时 |
+
+### kb/ — 知识层（想查知识/防坑/理解模块时读这里）
+
+| 文件 | 内容 | 什么时候读 |
+|------|------|-----------|
+| [kb/knowledge.md](./kb/knowledge.md) | 知识卡片库：Papers（论文）/ Libraries（框架 API）/ Concepts（核心概念）/ Tools（工程工具）/ ADR（架构决策）/ 参考资料 | 开始任务卡前查前置知识；调研新知识后追加 |
+| [kb/lessons.md](./kb/lessons.md) | 踩坑教训 L1~L4，叙事性，有现场感：现象 → 根因 → 解法 → 适用范围 | 遇到奇怪 bug 先来这里查；完成任务卡后追加新教训 |
+| [kb/blueprints.md](./kb/blueprints.md) | 模块契约卡片：每个模块的接口签名、设计意图、踩坑、跨 M 依赖关系 | 改某个模块前先看它的 blueprint；M 归档时更新 |
 
 ---
 
@@ -60,12 +60,10 @@ docs/
 
 ```
 inferlite/
-├── CLAUDE.md              # AI 协作约定（项目级常驻记忆）
+├── CLAUDE.md              # AI 协作约定（项目级常驻记忆，新会话必读）
 ├── Makefile               # 任务运行器（make help 列出全部目标）
 ├── pyproject.toml         # Python 项目 + 依赖声明
 ├── uv.lock                # 依赖锁定（commit 进 git）
-├── .pre-commit-config.yaml
-├── .github/workflows/     # CI: ubuntu+macos × py3.12
 ├── .claude/commands/      # 5 个 slash 命令（plan/work/review/archive/preflight）
 │
 ├── docs/                  # 本目录（spec + 知识库）
@@ -77,7 +75,7 @@ inferlite/
 │   └── cli.py
 │
 ├── tests/
-│   ├── unit/              # L0 单测（vs transformers ground truth）
+│   ├── unit/              # L0 单测（vs transformers ground truth，allclose）
 │   ├── integration/       # L1-L2 集成测试
 │   └── e2e/               # L3 端到端
 │
@@ -85,16 +83,6 @@ inferlite/
     ├── setup.sh           # 一键安装（make setup 调用）
     └── preflight.py       # 开工前体检（make preflight 调用）
 ```
-
----
-
-## 阅读指引
-
-**开始一个里程碑**：`plan/PROGRESS.md` → 当前 M 的设计文档 → `tasks/M*-T*.md` 逐卡推进
-
-**接手一张任务卡**：任务卡（算法核心 + 测试清单 + DoD）→ `kb/knowledge.md`（前置知识）→ `kb/blueprints.md`（模块契约）
-
-**踩坑 / 复盘**：`kb/lessons.md` 查已有的坑；完成后往 `kb/lessons.md` 和 `kb/knowledge.md` 追加一条
 
 ---
 
