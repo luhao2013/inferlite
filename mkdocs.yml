@@ -70,10 +70,10 @@ theme:
     code: JetBrains Mono
 
 extra_css:
-  - stylesheets/extra.css
+  - _assets/stylesheets/extra.css
 
 extra_javascript:
-  - javascripts/extra.js
+  - _assets/javascripts/extra.js
 
 nav:
   - 首页: README.md
