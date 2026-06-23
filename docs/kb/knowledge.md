@@ -1371,6 +1371,41 @@ KVCache.from_config(...)    # 静态预分配，一次 malloc，不动态扩容
 KVCache.reset()             # 只清 cur_len，tensor 不清零（prefill 会覆盖）
 ```
 
+**Static Allocation 生命周期**：
+
+```
+EngineCore.__init__()
+    └── KVCache.from_config(max_seq_len=1024)
+          → 一次性分配所有 tensor，占满显存槽位，之后不再 malloc
+
+每次 generate() 调用
+    └── cache.reset()          ← 只清 cur_len=0，tensor 原地复用，不释放
+    └── prefill + decode loop  ← 不断往 cache 里写
+generate() 返回
+    → cache 仍在显存中，等待下次 generate() 复用
+
+程序退出 / del kv_cache
+    → Python GC 释放，显存才归还
+```
+
+**显存占用估算**（Qwen3-0.6B，B=1，max_seq_len=1024，fp32）：
+
+```
+2（K+V）× 28层 × 1 × 8头 × 1024 × 128 × 4字节 ≈ 58 MB
+```
+
+不管用户实际生成多少 token，这 58 MB 一直占用。
+
+**Static Allocation 的取舍**：
+
+| | 优点 | 代价 |
+|---|---|---|
+| 静态预分配 | 推理期间零 malloc，延迟稳定 | 按 max_seq_len 固定占显存 |
+| reset 不清零 tensor | 省 memset 时间 | 内存里有旧数据（无害，prefill 覆盖） |
+| max_seq_len 固定 | 实现简单 | 设大了浪费，设小了触发 IndexError |
+
+**与跨请求 Prefix Cache 的区别**：本节的 cache 只服务一次 generate() 内部的历史积累，没有"命中/未命中"的概念——每步 decode 必然命中，因为上一步刚写进去。Prefix Cache（跨请求复用）才需要命中判断，见下方第 2 节。
+
 #### 2. 跨请求 Prefix Cache（vLLM / 生产系统）
 
 **核心问题**：多轮对话第 2 轮来时，如果把第 1 轮的 KV Cache 复用，就不用重算历史 token。

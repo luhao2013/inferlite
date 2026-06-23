@@ -38,6 +38,7 @@ import torch
 import torch.nn as nn
 
 from inferlite.config import ModelConfig
+from inferlite.model.kv_cache import LayerKVCache
 from inferlite.model.layers import RMSNorm, RotaryEmbedding, apply_rotary_pos_emb
 
 
@@ -152,18 +153,47 @@ class GQAAttention(nn.Module):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        position_ids: torch.Tensor,
+        position_ids: torch.Tensor | None = None,
+        position_embeddings: tuple[torch.Tensor, torch.Tensor] | None = None,
+        layer_kv_cache: LayerKVCache | None = None,
+        cache_position: int = 0,
     ) -> torch.Tensor:
-        """执行单段 causal self-attention。
+        """执行 causal self-attention，支持 M1（无 cache）和 M2（有 cache）两路。
+
+        ## 两种调用方式
+
+        **M1 路径**（无 cache，每步传全量 tokens）：
+            forward(hidden_states=[B, T, H], position_ids=[B, T])
+            - hidden_states 包含历史 + 当前所有 token
+            - 每步重算所有 K/V，O(T²)
+
+        **M2 路径**（有 cache，每步只传当前 token）：
+            forward(hidden_states=[B, 1, H], position_embeddings=(cos, sin),
+                    layer_kv_cache=cache.layers[i], cache_position=cur_len)
+            - hidden_states 只含当前新 token（T=1 for decode，T=T_p for prefill）
+            - 历史 K/V 从 cache 读取，O(T)
+
+        ## 参数
 
         Args:
             hidden_states: [B, T, hidden_size]
-                来自上一层 decoder block 或 embedding 的残差流张量。
-            position_ids: [B, T]
-                每个 token 的绝对位置，用于生成 RoPE 的 cos/sin。
+                M1：所有 token（历史 + 当前）的 hidden states。
+                M2 prefill：prompt 全部 token，T = prompt 长度。
+                M2 decode：只有当前新 token，T = 1。
+            position_ids: [B, T]，M1 兼容路径专用。
+                token 的绝对位置，用于 Attention 内部计算 RoPE cos/sin。
+                M2 路径改用 position_embeddings（外部统一计算，避免 28 层重复调用）。
+            position_embeddings: (cos, sin)，M2 路径专用，与 position_ids 二选一。
+                由 Qwen3Model.forward 统一计算后传入；shape: [B, T, head_dim]。
+            layer_kv_cache: 当前层的 KV Cache 容器。
+                不为 None 时启用 M2 路径：RoPE 后写入当前 K/V，读出完整历史 K/V。
+                None 时走 M1 兼容路径，行为与原始实现完全相同。
+            cache_position: 当前 token(s) 写入 cache 的起始槽位 = kv_cache.cur_len。
+                prefill 时为 0；decode 第 i 步时为 prompt_len + i。
+                由 generate loop 维护并传入，Attention 内部不修改它。
 
         Returns:
-            attention output: [B, T, hidden_size]
+            [B, T, hidden_size]，T 与输入 hidden_states 的 seq_len 相同。
         """
         batch_size, seq_len, _ = hidden_states.shape
 
@@ -207,43 +237,64 @@ class GQAAttention(nn.Module):
         q = self.q_norm(q)
         k = self.k_norm(k)
 
-        # 3. 根据 position_ids 生成 cos/sin，再应用到 q/k。v 不做 RoPE。
-        # rotary_emb 传入 q 只是借用 q 的 device/dtype；角度由 position_ids + inv_freq 决定。
-        # apply_rotary_pos_emb 后，位置信息进入 q/k，随后通过 q·k 影响 attention score。
-        cos, sin = self.rotary_emb(q, position_ids)
+        # 3. RoPE：根据位置生成 cos/sin，旋转 q/k 嵌入位置信息。v 不做 RoPE。
+        # M1 路径：在 Attention 内部调用 rotary_emb（每层各算一次，共 28 次）。
+        # M2 路径：cos/sin 由 Qwen3Model 统一算好传入，28 层共用一次结果，节省重复计算。
+        if position_embeddings is not None:
+            cos, sin = position_embeddings  # M2 路径
+        else:
+            cos, sin = self.rotary_emb(q, position_ids)  # M1 兼容路径
         q, k = apply_rotary_pos_emb(q, k, cos, sin, unsqueeze_dim=1)
 
-        # 4. GQA：把 KV heads repeat 到 Query heads 数量。
-        # repeat 后：
-        #   k/v: [B, n_kv, T, D] -> [B, n_q, T, D]
-        # 这样 q 和 k/v 的 head 维度才能一一对应做 attention。
+        # 3.5 KV Cache 读写（M2 路径，RoPE 之后 / repeat_kv 之前）。
+        #
+        # 时机选择：RoPE 之后——k 已经携带位置信息，存入 cache 的是"带位置的 k"。
+        # repeat_kv 之前——cache 存的是原始 n_kv 维度，更省显存；repeat 之后再做 attention。
+        #
+        # 写入：把当前 token(s) 的 k/v 原地写入 cache 的 [cache_position] 槽位。
+        #   切片赋值（不是 append/cat），原地修改 cache tensor，不分配新内存。
+        # 读出：用切片 [:cache_position + seq_len] 一次拿出所有有效历史。
+        #   这一刀切出来的是 cache tensor 的 view（不 copy），T_k = cache_position + seq_len。
+        #
+        # M1 兼容路径（layer_kv_cache=None）：跳过，k/v 直接用当前输入的。
+        if layer_kv_cache is not None:
+            # 写：当前 token(s) 的 k/v → [cache_position : cache_position + seq_len]
+            layer_kv_cache.k[:, :, cache_position : cache_position + seq_len, :] = k
+            layer_kv_cache.v[:, :, cache_position : cache_position + seq_len, :] = v
+            # 读：完整有效历史 k/v，T_k >= seq_len
+            k = layer_kv_cache.k[:, :, : cache_position + seq_len, :]
+            v = layer_kv_cache.v[:, :, : cache_position + seq_len, :]
+
+        # 4. GQA repeat_kv：把 KV heads 扩展到 Query heads 数量，才能一一对应做 attention。
+        # cache 存的是 n_kv 维度；repeat 之后 k/v 变成 n_q 维度。
+        # 有 cache 时 k/v 的 T 维已经是完整历史 T_k（>= seq_len）。
         k = repeat_kv(k, self.num_key_value_groups)
         v = repeat_kv(v, self.num_key_value_groups)
 
         # 5. scaled dot-product attention。
-        # attn_weights: [B, n_q, T, D] @ [B, n_q, D, T] -> [B, n_q, T, T]
-        # 第 i 行表示第 i 个 query token 对所有 key token 的打分。
+        # q:           [B, n_q, T, D]    T = 当前输入长度
+        # k（有cache）: [B, n_q, T_k, D]  T_k = cache_position + T >= T
+        # attn_weights: q @ k^T → [B, n_q, T, T_k]
+        # 第 i 行：第 i 个 query token 对所有 T_k 个历史 token 的打分。
         attn_weights = torch.matmul(q, k.transpose(2, 3)) * self.scaling
 
-        # causal mask 禁止当前位置看未来 token。
-        # torch.triu(..., diagonal=1) 得到上三角 True：
-        #   row i, col j 为 True 表示 j > i，也就是未来 token。
-        # M1 每步 forward 都重建这个 tensor，随 seq_len 增长开销增大。
-        # M2 引入 KV cache 后：
-        #   - prefill 阶段仍需完整 causal mask；
-        #   - decode 步单 token 管看到所有历史，不需要 causal mask，届时可以删採。
-        # TODO(M2): KV cache 后删採 decode 步的 causal mask 重建逻辑。
-        causal_mask = torch.triu(
-            torch.ones(seq_len, seq_len, dtype=torch.bool, device=hidden_states.device),
-            diagonal=1,
-        )
-        # 显式扩到 [1, 1, T, T]，广播到 [B, n_q, T, T]。
-        causal_mask = causal_mask[None, None, :, :]
-        # 被 mask 的位置填成 dtype 最小值，softmax 后概率接近 0。
-        attn_weights = attn_weights.masked_fill(
-            causal_mask,
-            torch.finfo(attn_weights.dtype).min,
-        )
+        # causal mask：防止当前 token 看到未来位置。
+        # 只在 seq_len > 1 时构建（prefill 需要；decode 步 T=1 单 token 无未来可看，跳过）。
+        # 有 cache 时 k 的 T 维是 T_k（历史 + 当前），mask shape 必须是 [T, T_k] 而非 [T, T]。
+        # diagonal = cache_position + 1：prefill（cache_position=0）等价于标准 diagonal=1。
+        if seq_len > 1:
+            seq_k = k.shape[-2]  # 带 cache 时 T_k > T
+            causal_mask = torch.triu(
+                torch.ones(seq_len, seq_k, dtype=torch.bool, device=hidden_states.device),
+                diagonal=cache_position + 1,
+            )
+            # 显式扩到 [1, 1, T, T]，广播到 [B, n_q, T, T]。
+            causal_mask = causal_mask[None, None, :, :]
+            # 被 mask 的位置填成 dtype 最小值，softmax 后概率接近 0。
+            attn_weights = attn_weights.masked_fill(
+                causal_mask,
+                torch.finfo(attn_weights.dtype).min,
+            )
         # 与 transformers eager attention 对齐：softmax 用 fp32 做，再 cast 回 q dtype。
         attn_weights = torch.softmax(attn_weights, dim=-1, dtype=torch.float32).to(q.dtype)
 
