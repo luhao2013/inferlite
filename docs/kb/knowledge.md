@@ -30,7 +30,7 @@
 
 每个核心模块（ModelConfig / RMSNorm / GQAAttention / EngineCore 等）的接口契约、推理链路位置、踩坑记录、跨 M 依赖。越写越复杂时先查这里。
 
-**已落地的 ADR**（[详见 decisions.md](./decisions.md)）：
+**已落地的 ADR**（[详见 knowledge.md → 架构决策 ADR](./knowledge.md)）：
 
 - **ADR-001** spec-driven 工作流 + 双文件知识库
 - **ADR-002** 知识库与代码同仓（R1 重构）
@@ -1988,3 +1988,75 @@ CI 跑 `-m "not slow"` 跳过慢测试。matrix: ubuntu + macos, python 3.12。
 - **删除卡片**：直接删段，更新引用
 - **跨段引用**：用 markdown 锚点 `[upcast](#数值升精度upcast-to-fp32)`
 - **完整精读论文**：留链接到 `docs/papers/...`（走 `paper-deep-read` skill），本文件只放项目视角摘要
+
+---
+
+## 架构决策 (ADR)
+
+> 长效架构/方法论决策，记录"为什么这么设计"。
+
+### ADR-001: spec-driven 工作流 + 知识库同仓
+
+**状态**：Accepted (2026-06-07)
+
+inferlite = 作者手撕 + AI 辅助 plan/review/doc 的学习项目。采用 spec-driven 工作流：
+- `docs/plan/` 作战地图（架构 / 总览 / 任务卡总表）
+- `docs/tasks/M{n}-T*.md` 任务卡（一卡一文件，PR 粒度）
+- `docs/kb/knowledge.md` 知识点 + `docs/kb/lessons.md` 教训（单文件多 H2 平面化）
+- `CLAUDE.md` 项目级 AI 常驻记忆 + `.claude/commands/` 5 个 slash 命令
+
+知识库与代码同仓（R1 重构决策）：代码改动与知识库改动同 commit，AI 一次 `read_file` 拉完所有原子卡，全文搜索 cmd+F 即可。
+
+**替代方案否决**：仅 Memory 则人无法 grep；跨仓则 PR review 看不到知识库变化；不沉淀则每个 M 从零规划。
+
+### ADR-002: MkDocs Material 文档可视化
+
+**状态**：Accepted (2026-06-07)
+
+`make docs-serve` 起本地 http://localhost:8000，GitHub Actions 自动 deploy 到 gh-pages。按"何时读"分 3 组：`plan/`（规划层）/ `tasks/`（执行层）/ `kb/`（知识层），`setup.md` 顶层独立新人入口。
+
+---
+
+## AI 协作方法论参考
+
+> 开工前查当前阶段必看的 1-2 个，不要一次读全部。
+
+### 第一梯队：必看（M1 阶段）
+
+#### GeeeekExplorer/nano-vllm
+- **GitHub**: https://github.com/GeeeekExplorer/nano-vllm
+- **体量**: ~1200 行 Python，单 GPU，纯 PyTorch
+- **对 inferlite 的价值**: **目标体量参照物**，覆盖 prefix cache + PagedAttention
+- **怎么读**: M1 只看 `nanovllm/models/qwen3.py`（~200 行最简 Qwen3）
+
+#### rasbt/LLMs-from-scratch
+- **GitHub**: https://github.com/rasbt/LLMs-from-scratch
+- **体量**: 系列 Jupyter notebook，GPT-2 风格
+- **对 inferlite 的价值**: **教学对照**，M1 数值对齐阶段参照
+- **怎么读**: Chapter 4-5（attention + train loop）
+
+#### MinivLLM（教学版）
+- **GitHub**: https://github.com/vllm-project/vllm（参考 v1 目录）
+- **对 inferlite 的价值**: 模块映射底图，理解 Worker/Engine/Scheduler 分层
+
+### 第二梯队：M2+ 阶段参考
+
+#### vLLM v1 engine
+- **路径**: `vllm/v1/`
+- **对 inferlite 的价值**: Continuous Batching + PagedAttention 工程级对照，**只读不抄**
+
+#### transformers StaticCache / DynamicCache
+- **链接**: https://github.com/huggingface/transformers/blob/main/src/transformers/cache_utils.py
+- **对 inferlite 的价值**: M2 KV Cache 实现对照参考
+
+### AI 协作工具参考
+
+| 资料 | 核心价值 |
+|------|---------|
+| [Addy Osmani — LLM Coding Workflow 2026](https://medium.com/@addyosmani/my-llm-coding-workflow-going-into-2026-52fe1681325e) | "约束"比"功能"更重要；小步 commit = 开发过程文档 |
+| [Anthropic Claude Code Best Practices](https://www.anthropic.com/engineering/claude-code-best-practices) | CLAUDE.md 常驻记忆 / 自定义命令写法 |
+| [Simon Willison — Coding with LLMs in Late 2025](https://simonwillison.net/2025/Oct/27/coding-with-llms/) | 综述含 prompt 模式 |
+| [PatrickJS/awesome-cursorrules](https://github.com/PatrickJS/awesome-cursorrules) | AGENTS.md / CLAUDE.md 措辞素材 |
+
+**元洞察**（来自 T1 RMSNorm 复盘，已记为 L3）：
+> "地基"和"算法"是两个频道，不要混着切。这就是 spec-driven 的本质：把"做什么"与"怎么做"分离到两个时间窗口。

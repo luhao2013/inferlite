@@ -95,7 +95,7 @@ sequenceDiagram
 \`\`\`
 
 ### 关键决策
-- 列出本 M 期间产生的 ADR（链接到 decisions.md）
+- 列出本 M 期间产生的 ADR（链接到 knowledge.md → 架构决策）
 - 否决的方案 + 否决理由
 
 ### 新增 knowledge（本 M 期间）

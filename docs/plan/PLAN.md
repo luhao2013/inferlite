@@ -31,7 +31,7 @@
    - 完成总结段是最低门槛
    - 如果踩坑了 → `lessons.md` 加 L 编号
    - 如果用到了新论文/库/概念 → `knowledge.md` 对应章节加卡片
-   - 如果产生方法论决策 → `decisions.md` 加 ADR
+   - 如果产生方法论决策 → `knowledge.md → 架构决策章节` 加 ADR
 
 4. **`make doctor` 是 commit 的零成本守卫**
    PLAN/PROGRESS/任务卡 改动后 push 前手动跑一次。doctor 没绿不 push。

@@ -1,134 +1,60 @@
+# inferlite 文档目录
+
+> 从零手写 LLM 推理引擎 · 代码全手敲 · AI 辅助规划/复盘/文档
+> GitHub: [luhao-lab/inferlite](https://github.com/luhao-lab/inferlite)
+
 ---
-hide:
-  - navigation
-  - toc
----
 
-<div class="geek-hero" markdown>
+## 目录结构
 
-# inferlite
-
-<p class="tagline">从零手撕的 LLM 推理引擎学习项目 · L0-aligned with transformers</p>
-
-<div class="badges" markdown>
-
-![CI](https://img.shields.io/github/actions/workflow/status/luhao-lab/inferlite/tests.yml?branch=main&label=CI&style=flat-square&color=26c6da)
-![Tests](https://img.shields.io/badge/tests-12%2F12-5dff9b?style=flat-square)
-![Python](https://img.shields.io/badge/python-3.12-26c6da?style=flat-square)
-![License](https://img.shields.io/badge/license-MIT-94a3b8?style=flat-square)
-
-</div>
-
-<div class="actions" markdown>
-
-[:octicons-rocket-16: &nbsp;立即开始](./setup.md){ .primary }
-[:octicons-graph-16: &nbsp;查看进度](./plan/PROGRESS.md){ .secondary }
-[:fontawesome-brands-github: &nbsp;GitHub](https://github.com/luhao-lab/inferlite){ .secondary }
-
-</div>
-
-</div>
-
-## 文档导航
-
-<div class="card-grid" markdown>
-
-<a class="card" href="./plan/PLAN.md"><span class="icon">:octicons-milestone-16:</span><span class="title">plan/</span><span class="desc">14 个里程碑路线图、当前作战地图 M1、整体进度跟踪。</span><span class="meta">PLAN · PROGRESS · M&lt;n&gt;</span></a>
-
-<a class="card" href="./tasks/README.md"><span class="icon">:octicons-checklist-16:</span><span class="title">tasks/</span><span class="desc">任务卡七字段（前置 / 边界 / 验收 / 风险 / 完成总结），一卡一文件。</span><span class="meta">M1-T0 · M1-T1 ✓ · M1-T2</span></a>
-
-<a class="card" href="./kb/knowledge.md"><span class="icon">:octicons-book-16:</span><span class="title">kb/</span><span class="desc">知识库：论文 / 库 / 概念 / 工具 卡片化总结，踩坑教训 + ADR 决策记录。</span><span class="meta">knowledge · lessons · decisions</span></a>
-
-<a class="card" href="./setup.md"><span class="icon">:octicons-tools-16:</span><span class="title">setup.md</span><span class="desc">一键 uv install、常用 make 命令、仓库结构速查、大坑预警。</span><span class="meta">uv · make · ruff · pytest</span></a>
-
-</div>
-
-## 文档关系图
-
-```mermaid
-flowchart TD
-    USER([新会话进入]):::user --> README[docs/README.md<br/>本页 · 总入口]:::entry
-    README -->|新人| SETUP[setup.md<br/>环境 + 仓库结构]:::setup
-    README -->|看全貌| PLAN[plan/PLAN.md<br/>14 个 M 路线图]:::plan
-    README -->|开工| PROGRESS[plan/PROGRESS.md<br/>状态跟踪]:::plan
-    README -->|查知识| KB[kb/knowledge.md<br/>Papers/Libs/Concepts/Tools]:::kb
-
-    PROGRESS --> M1[plan/M1.md<br/>当前作战地图]:::plan
-    M1 --> T0P[tasks/M1-T0<br/>ModelConfig]:::tasks
-    M1 --> T1[tasks/M1-T1<br/>RMSNorm ✓]:::tasks
-    M1 --> T2[tasks/M1-T2<br/>SwiGLU]:::tasks
-
-    T0P -.前置阅读.-> KB
-    T1 -.沉淀.-> LESSONS[kb/lessons.md]:::kb
-    T1 -.沉淀.-> KB
-    PLAN -.方法论.-> DEC[kb/decisions.md<br/>ADR-001/002/003]:::kb
-    KB -.原始链接.-> REF[kb/REFERENCES.md]:::kb
-
-    classDef user fill:#1a1f2e,stroke:#7fdbca,stroke-width:2px,color:#fff3b0
-    classDef entry fill:#0a2540,stroke:#26c6da,stroke-width:2px,color:#26c6da
-    classDef setup fill:#0d2818,stroke:#5dff9b,color:#5dff9b
-    classDef plan fill:#291638,stroke:#b388ff,color:#b388ff
-    classDef tasks fill:#1a1538,stroke:#7c4dff,color:#bb9bff
-    classDef kb fill:#3a1a0d,stroke:#ffb74d,color:#ffb74d
-
-    click README "./"
-    click SETUP "./setup.md"
-    click PLAN "./plan/PLAN.md"
-    click PROGRESS "./plan/PROGRESS.md"
-    click M1 "./plan/M1.md"
-    click T0P "./tasks/M1-T0-ModelConfig.md"
-    click T1 "./tasks/M1-T1-RMSNorm.md"
-    click T2 "./tasks/M1-T2-SwiGLU.md"
-    click KB "./kb/knowledge.md"
-    click LESSONS "./kb/lessons.md"
-    click DEC "./kb/decisions.md"
-    click REF "./kb/REFERENCES.md"
+```
+docs/
+├── README.md          ← 本文件，目录总览
+├── setup.md           ← 环境安装、make 命令速查、大坑预警（新人必读）
+│
+├── plan/              ← 「规划层」记录做什么、为什么、做到哪了
+│   ├── PLAN.md            里程碑路线图（14 个 M，项目全貌）
+│   ├── PROGRESS.md        每个 M 的进度状态 + 变更日志
+│   ├── M1.md              M1 作战地图：架构图、任务总表、测试金字塔
+│   └── m2-kv-cache-design.md   M2 技术设计文档：方案调研、ADR、数据流
+│
+├── tasks/             ← 「执行层」每张任务卡是一次 PR 粒度的作战单元
+│   ├── _TEMPLATE.md       任务卡 7 字段模板（AI /work 命令自动填充）
+│   ├── M2-T*.md（5张）    当前活跃任务卡（M2 KV Cache 阶段）
+│   └── M1-archive/        已完成的 M1 任务卡（历史档案，可查学习记录）
+│       └── M1-T*.md（12张）
+│
+└── kb/                ← 「知识层」沉淀可复用的知识，防止经验流失
+    ├── knowledge.md       知识卡片库：Papers / Libraries / Concepts / Tools / ADR / 参考资料
+    ├── lessons.md         踩坑教训（L1~L4，叙事性，按时间追加）
+    └── blueprints.md      模块契约：每个核心模块的接口、踩坑、跨 M 依赖
 ```
 
-## 三类文档
+---
 
-| 分类           | 时间维度       | 写作时机                | 文件                                                                |
-| -------------- | -------------- | ----------------------- | ------------------------------------------------------------------- |
-| **plan/**    | 未来 / 当前    | 规划 + 持续更新         | `PLAN.md` `PROGRESS.md` `M<n>.md`                                   |
-| **tasks/**   | 当前           | 开工时写、完成时收尾    | `M<n>-T<x>-*.md`                                                    |
-| **kb/**      | 过去（沉淀）   | 任务结束后归档          | `knowledge.md` `lessons.md` `decisions.md` `REFERENCES.md`          |
-| **setup.md** | 长期常驻       | 项目稳定后不常变        | `setup.md`                                                        |
+## 阅读指引
 
-## 三条阅读路径
+**新开一个里程碑**（如 M2）：
+1. `plan/PROGRESS.md` — 确认当前进度状态
+2. `plan/m2-kv-cache-design.md` — 读技术设计文档，理解方案
+3. `tasks/M2-T*.md` — 逐卡推进
 
-=== ":octicons-rocket-16: 新人 onboarding"
+**接手一张任务卡**（如 M2-T1）：
+1. 读对应 `tasks/M2-T1-*.md` — 算法核心、测试清单、DoD
+2. `kb/knowledge.md` — 查前置知识章节
+3. `kb/blueprints.md` — 查涉及模块的接口契约
 
-    1. 你正在看的 `README.md` — 知道有哪些文档
-    2. [setup.md](./setup.md) — 5 分钟跑起项目
-    3. [plan/PLAN.md](./plan/PLAN.md) — 看整体路线
-    4. [kb/decisions.md](./kb/decisions.md) — 理解为什么这么做
+**踩坑 / 复盘**：
+- `kb/lessons.md` — 查已有的坑，避免重蹈
+- 完成任务卡后，往 `kb/lessons.md` 和 `kb/knowledge.md` 追加一条
 
-=== ":octicons-checklist-16: 接任务"
-
-    1. [plan/PROGRESS.md](./plan/PROGRESS.md) — 找下一张 :material-checkbox-blank-outline: 任务
-    2. [tasks/](./tasks/README.md) 中读对应任务卡 7 字段
-    3. [kb/knowledge.md](./kb/knowledge.md) — 按"前置"段查相关章节
-
-=== ":octicons-history-16: 复盘"
-
-    1. [kb/lessons.md](./kb/lessons.md) — 全部踩坑
-    2. 当前 `M<n>.md` 末尾 Summary
-    3. 任务卡末尾"完成总结"段
-
-## 本地预览
-
-<div class="termy" markdown>
-
-```bash
-$ make docs-serve              # http://localhost:8000
-$ make docs-build              # → site/
-$ make docs-deploy             # gh-pages
-```
-
-</div>
+**项目全貌**：
+- `plan/PLAN.md` — 14 个里程碑，从 M1 单序列推理到 M14 VLM 工程化
 
 ---
 
-!!! tip "AI 协作"
-    本仓库使用 spec-driven workflow，AI 协作约定见仓库根 `CLAUDE.md`。
-    新会话进入前建议先 `search_memory("inferlite")`。
+## 当前进度
+
+M1 Qwen3 单序列推理 ✅ → **M2 KV Cache 进行中** → M3 Continuous Batching ⬜
+
+详见 [plan/PROGRESS.md](./plan/PROGRESS.md)

@@ -35,13 +35,13 @@
   - `docs/kb/knowledge.md` 知识点（H2: Papers/Libraries/Concepts/Tools）
   - `docs/kb/lessons.md` 教训（L1, L2, ...）
   - `docs/kb/blueprints.md` 模块契约（每个核心模块的接口/位置/踩坑/跨M依赖）← 新增
-  - `docs/kb/decisions.md` ADR
-  - `docs/kb/REFERENCES.md` 参考资料
+  - `docs/kb/knowledge.md` ADR
+  - `docs/kb/knowledge.md` 参考资料
   - `docs/setup.md` 环境 + 仓库结构
 - **Memory**：CodeFlicker repos dimension，关键字 `inferlite`
 - **可视化**：`make docs-serve` 起本地 MkDocs Material（http://localhost:8000），或 GitHub Pages（push main 自动 deploy）
 - 新会话进入项目时先 `search_memory("inferlite")`，再读 `docs/README.md` + `docs/plan/PROGRESS.md` + 当前 `M<n>.md`
-- 详见 `docs/kb/decisions.md` ADR-001 / ADR-002 / ADR-003
+- 详见 `docs/kb/knowledge.md` ADR-001 / ADR-002 / ADR-003
 
 ## Slash 命令（5 个）
 - `/plan <scope>` — 规划（M / T / 调整），含前置调研，自动补 knowledge.md

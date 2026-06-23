@@ -65,7 +65,7 @@ inferlite/
 ├── docs/                  # 全部文档（spec + 知识库）
 │   ├── PLAN.md            # 14 个 M 路线图
 │   ├── PROGRESS.md        # 状态跟踪
-│   ├── REFERENCES.md      # 参考资料分层
+│   ├── （已合并入 knowledge.md）
 │   ├── M1.md ...          # 单 M 作战地图（M 完成后追加 Summary 段）
 │   ├── tasks/
 │   │   ├── README.md
@@ -73,7 +73,7 @@ inferlite/
 │   │   └── M<N>-T<X>-*.md # 任务卡（一卡一文件）
 │   ├── knowledge.md       # 知识点（papers / libs / concepts / tools 四章）
 │   ├── lessons.md         # 教训（L1, L2, ...）
-│   ├── decisions.md       # ADR
+│   ├── （已合并入 knowledge.md）
 │   └── setup.md           # 本文件
 │
 ├── inferlite/             # 主 Python 包
@@ -108,7 +108,7 @@ inferlite/
 | `docs/tasks/M<N>-T<X>.md` | 任务卡 | 开新卡 / 卡完成 |
 | `docs/kb/knowledge.md` | 知识点（单文件多 H2） | 调研时追加章节 |
 | `docs/kb/lessons.md` | 教训 | 任务卡 ✅ 时追加 |
-| `docs/kb/decisions.md` | ADR | 重大决策 |
+| `docs/kb/knowledge.md` | ADR | 重大决策 |
 
 ---
 
