@@ -56,6 +56,50 @@ make lint && make fmt && make typecheck
 
 ---
 
+## 工作流程（文档协作关系）
+
+这个项目用 **spec-driven** 工作流：先写文档，再写代码，代码和文档同 commit。
+
+### 里程碑生命周期
+
+```
+1. /plan M<n>          AI 调研 + 产出设计文档 plan/m<n>-design.md + 任务卡骨架
+        ↓
+2. /work M<n>-T<x>     AI 输出作战简报（前置知识检查 + 接口签名 + 测试清单）
+        ↓
+3. 作者写代码           inferlite/**/*.py（AI 不写业务代码）
+        ↓
+4. 作者跑测试           uv run pytest → 贴结果
+        ↓
+5. /review M<n>-T<x>   AI review 代码质量 → 建议修改
+        ↓
+6. /archive task T<x>  AI 沉淀：更新 kb/lessons.md + kb/knowledge.md + kb/blueprints.md
+        ↓               更新 plan/PROGRESS.md 勾选任务 → commit
+7. （重复 2-6 直到本 M 所有任务卡完成）
+        ↓
+8. /archive milestone M<n>   AI 写 Summary + 更新 PROGRESS.md → git tag
+```
+
+### 各文档的更新时机
+
+| 文档 | 谁更新 | 什么时候更新 |
+|------|--------|-------------|
+| `plan/PLAN.md` | AI | 新开里程碑、调整路线时（/plan 命令） |
+| `plan/PROGRESS.md` | AI | 每张任务卡 ✅ 时（/archive 命令自动更新） |
+| `plan/M<n>.md` | AI | 新开里程碑时新建；里程碑归档时追加 Summary |
+| `plan/m<n>-design.md` | AI | 里程碑启动时创建，推进期持续完善 |
+| `tasks/M<n>-T<x>.md` | AI | /work 开卡时创建；/archive 时末尾追加完成总结 |
+| `kb/knowledge.md` | AI | 每次 /archive 后追加新知识卡片 |
+| `kb/lessons.md` | AI | 每次 /archive 后追加新教训 |
+| `kb/blueprints.md` | AI | 每次 /archive 后更新相关模块的契约 |
+
+### PROGRESS.md vs M\<n\>.md 的区别
+
+- **PROGRESS.md**：横向视图，跨所有里程碑，一行 = 一个 M 的状态。看"现在做到哪了"。
+- **M\<n\>.md**：纵向视图，单个里程碑的完整作战细节（架构图 / 任务表 / 测试金字塔）。M 结束后冻结，变成历史档案。
+
+---
+
 ## 仓库结构
 
 ```
