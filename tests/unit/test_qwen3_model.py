@@ -118,7 +118,9 @@ class _AddLayer(nn.Module):
         super().__init__()
         self.value = value
 
-    def forward(self, hidden_states: torch.Tensor, position_ids: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, hidden_states: torch.Tensor, position_ids: torch.Tensor, **kwargs
+    ) -> torch.Tensor:
         return hidden_states + self.value
 
 

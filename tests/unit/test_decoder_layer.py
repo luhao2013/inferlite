@@ -101,7 +101,13 @@ class _AddOne(nn.Module):
 
 
 class _AddTwoAttention(nn.Module):
-    def forward(self, hidden_states: torch.Tensor, position_ids: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        position_ids: torch.Tensor,
+        position_embeddings=None,
+        **kwargs,
+    ) -> torch.Tensor:
         return hidden_states + 2
 
 
