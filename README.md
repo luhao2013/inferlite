@@ -26,7 +26,7 @@
 | **代码全手敲** | 作者本人手写每一行 `inferlite/*.py`；Agent 仅辅助研究 / 计划 / Review / 文章 |
 | **里程碑闭环** | 每个 M 完成 = ① 代码 push  ② 知乎文章发布  ③ PROGRESS 更新 |
 | **学习 > 性能** | 优先可读性；性能优化作为后续里程碑慢慢加 |
-| **Spec-driven** | 任务卡 7 字段（前置/边界/验收/风险/完成总结），见 [ADR-001](docs/3-kb/decisions.md) |
+| **Spec-driven** | 任务卡 7 字段（前置/边界/验收/风险/完成总结），见 [ADR-001](docs/kb/decisions.md) |
 
 ## 30 秒 Quick Start
 
@@ -38,7 +38,7 @@ make test             # 跑 123/123 单测，全绿
 make preflight        # 一键拉 Qwen3-0.6B + 端到端跑一句话
 ```
 
-更多命令见 [`make help`](docs/4-setup.md#2-常用命令) 或 `docs/4-setup.md`。
+更多命令见 [`make help`](docs/README.md) 或 `docs/README.md`。
 
 ## 路线图
 
