@@ -47,11 +47,16 @@
 
     M1 耗时随 T 近似 T² 增长（0.81 ms → 14.72 ms，约 18×，T 比 32×）。
     M2 耗时基本稳定在 0.5-1 ms（MPS kernel launch 固定开销）。
-    实测 Speedup 低于理论值的原因：MPS 单次 kernel 的 launch overhead（~0.5 ms）
-    使短序列下 M2 和 M1 都有固定下限，序列更长后差距会趋近理论 T 倍。
+    实测 Speedup 低于理论值的原因有三：
+    (1) MPS 单次 kernel launch 约 30 µs，一次 forward 约 18 个 kernel → 固定 ~0.54 ms 开销，
+        T=1024 时占 M2 总耗时的 54%，直接压低 Speedup；
+    (2) M2 Attention 是 O(T) 非 O(1)：1 个 query 仍需对 T 个 key 点积，T=1024 时线性项 ≈ 0.46 ms；
+    (3) M1 在大 T 时 proj 矩阵乘 arithmetic intensity 更高（更靠近 GPU roofline），
+        执行效率优于 M2 的向量-矩阵乘，使分子比"理论 T² 倍"预期小。
 
     对比端到端 bench_kv_cache.py：T=512 端到端仅 7×，Attention-only 已达 8×，
     说明权重 I/O（~6 ms/step）是端到端加速比的主要上限，不是 Attention 算法本身。
+    要让 Speedup 趋近理论 T 倍，需要 FlashAttention 算子融合消除 kernel launch overhead。
 """
 
 import argparse
